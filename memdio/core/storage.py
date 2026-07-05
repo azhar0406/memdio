@@ -420,7 +420,7 @@ class StorageManager:
             self._conn.close()
             self._conn = None
 
-    def store(self, content, tags=None, encoder_version=3, document_date=None, event_date=None):
+    def store(self, content, tags=None, encoder_version=3, document_date=None, event_date=None, detect=True):
         """Store content as FLAC audio blob + embedding + relations.
 
         Encoder v3 (multi-channel OFDM) is the only supported version for new memories.
@@ -478,8 +478,9 @@ class StorageManager:
         )
         self._conn.commit()
 
-        # Detect contradictions and relations (after commit so the new memory is visible)
-        if embedding is not None:
+        # Detect contradictions and relations (after commit so the new memory is visible).
+        # Skippable for bulk ingestion, where per-store O(n) scans become O(n^2).
+        if detect and embedding is not None:
             self._detect_contradictions(mem_id, embedding, content)
             self._detect_relations(mem_id, embedding)
             self._conn.commit()

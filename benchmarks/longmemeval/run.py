@@ -31,6 +31,7 @@ from benchmarks.config import (
 from benchmarks.longmemeval.answer import distill_context, generate_answer, get_client
 from benchmarks.longmemeval.download import load_dataset
 from benchmarks.longmemeval.evaluate import evaluate_single, get_judge_client
+from benchmarks.longmemeval.extract import extract_facts, extract_model, extraction_enabled
 from benchmarks.longmemeval.ingest import cleanup_question_db, ingest_question
 from benchmarks.longmemeval.report import print_report, save_results
 from benchmarks.longmemeval.search import format_context, hybrid_search
@@ -71,7 +72,13 @@ def process_question(
     qtype = question.get("question_type", "unknown")
 
     try:
-        storage, db_dir = ingest_question(question)
+        if extraction_enabled():
+            emodel = extract_model()
+            def _extractor(text, date, _c=answer_client, _m=emodel, _p=provider):
+                return extract_facts(_c, _m, text, date, provider=_p)
+            storage, db_dir = ingest_question(question, extractor=_extractor)
+        else:
+            storage, db_dir = ingest_question(question)
     except Exception as e:
         return {
             "question_id": qid, "question_type": qtype,

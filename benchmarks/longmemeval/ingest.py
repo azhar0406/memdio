@@ -1,9 +1,9 @@
 """Ingest LongMemEval haystack sessions into memdio StorageManager."""
 
-import json
 import os
 import shutil
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 
 from memdio.core.storage import StorageManager
 
@@ -20,8 +20,14 @@ def format_session(session: list[dict], session_date: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def ingest_question(question: dict, base_dir: str | None = None) -> tuple[StorageManager, str]:
+def ingest_question(
+    question: dict, base_dir: str | None = None, extractor=None
+) -> tuple[StorageManager, str]:
     """Ingest all haystack sessions for a single question into an isolated StorageManager.
+
+    If ``extractor`` (a callable ``(session_text, date) -> list[str]`` of atomic facts)
+    is provided, each session is distilled into discrete fact-memories instead of the
+    raw session dump. Extraction runs in parallel across sessions (LLM-bound).
 
     Returns (storage_manager, db_path) so caller can clean up.
     """
@@ -36,11 +42,33 @@ def ingest_question(question: dict, base_dir: str | None = None) -> tuple[Storag
     sessions = question.get("haystack_sessions", [])
     dates = question.get("haystack_dates", [])
 
-    for i, session in enumerate(sessions):
+    if extractor is None:
+        for i, session in enumerate(sessions):
+            date = dates[i] if i < len(dates) else None
+            text = format_session(session, session_date=date)
+            if text.strip():
+                storage.store(text, document_date=date)
+        return storage, db_dir
+
+    # Hybrid mode: store the raw session (for detail questions) AND its distilled
+    # atomic facts (for aggregation/temporal questions). Extraction runs in parallel.
+    def _extract(i_session):
+        i, session = i_session
         date = dates[i] if i < len(dates) else None
         text = format_session(session, session_date=date)
+        if not text.strip():
+            return date, "", []
+        return date, text, extractor(text, date)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        per_session = list(pool.map(_extract, enumerate(sessions)))
+
+    for date, text, facts in per_session:
         if text.strip():
-            storage.store(text, document_date=date)
+            storage.store(text, document_date=date, detect=False)
+        for fact in facts:
+            content = f"[{date}] {fact}" if date else fact
+            storage.store(content, document_date=date, detect=False)
 
     return storage, db_dir
 
