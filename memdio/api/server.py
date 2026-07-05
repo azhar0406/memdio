@@ -89,7 +89,10 @@ async def store_memory(
 ):
     """Store a new memory."""
     try:
-        mem_id = storage.store(req.content, req.tags, document_date=req.document_date)
+        from memdio.core.llm import store_llm
+        mem_id = storage.remember(
+            req.content, llm=store_llm(), tags=req.tags, document_date=req.document_date
+        )
         return MemoryResponse(id=mem_id, content=req.content)
     except Exception:
         logger.exception("Error storing memory")

@@ -9,7 +9,7 @@ from memdio.core import llm as llm_mod
 def clear_env(monkeypatch):
     for k in (
         "MEMDIO_LLM_PROVIDER", "MEMDIO_LLM_BASE_URL", "MEMDIO_LLM_API_KEY",
-        "MEMDIO_LLM_MODEL", "MEMDIO_EXTRACT_MODEL",
+        "MEMDIO_LLM_MODEL", "MEMDIO_EXTRACT_MODEL", "MEMDIO_EXTRACT_ON_STORE",
         "OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
     ):
         monkeypatch.delenv(k, raising=False)
@@ -47,3 +47,14 @@ def test_auto_detect_prefers_openrouter(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-oa")
     # Should not raise; picks openrouter first.
     assert callable(llm_mod.default_llm())
+
+
+def test_store_llm_off_by_default(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")  # provider available...
+    assert llm_mod.store_llm() is None                 # ...but opt-in flag unset
+
+
+def test_store_llm_opt_in(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
+    monkeypatch.setenv("MEMDIO_EXTRACT_ON_STORE", "1")
+    assert callable(llm_mod.store_llm())

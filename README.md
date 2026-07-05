@@ -234,6 +234,12 @@ sm.recall("How many bags of feed have I bought?")   # -> fact-focused
 sm.recall("What did the store recommend?")          # -> raw+fact hybrid
 ```
 
+**Extraction on the MCP/REST write paths.** By default, `store_memory` (MCP) and
+`POST /memories` (REST) do a plain store — no LLM calls. Set `MEMDIO_EXTRACT_ON_STORE=1`
+(alongside a configured provider) to have those surfaces extract facts on write too, so
+routed `recall` / `GET /recall` benefit from discrete facts. The CLI `memdio remember`
+extracts by default (opt out with `--no-extract`).
+
 `remember` without an `llm` is a plain store; `recall` needs no LLM (pure retrieval).
 This is the layer that reached **72.9%** on LongMemEval (above), storing both an
 episodic raw memory and its semantic facts — on top of the same FLAC-audio storage.

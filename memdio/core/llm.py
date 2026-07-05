@@ -40,6 +40,17 @@ _OPENAI_COMPAT = {
 }
 
 
+def store_llm(model: str | None = None) -> Callable[[str], str] | None:
+    """Extraction callable for write paths (MCP/REST), gated by opt-in.
+
+    Returns ``default_llm()`` only when ``MEMDIO_EXTRACT_ON_STORE`` is truthy, so
+    stores through those surfaces don't make surprise LLM calls by default.
+    """
+    if os.environ.get("MEMDIO_EXTRACT_ON_STORE", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return None
+    return default_llm(model)
+
+
 def default_llm(model: str | None = None) -> Callable[[str], str] | None:
     """Return an ``llm(prompt) -> str`` callable, or ``None`` if unavailable."""
     provider = os.environ.get("MEMDIO_LLM_PROVIDER", "").strip().lower()

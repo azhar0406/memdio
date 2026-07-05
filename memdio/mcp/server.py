@@ -167,8 +167,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         storage = _get_storage()
 
         if name == "store_memory":
-            mem_id = storage.store(
-                arguments["content"], arguments.get("tags"),
+            from memdio.core.llm import store_llm
+            mem_id = storage.remember(
+                arguments["content"], llm=store_llm(), tags=arguments.get("tags"),
                 document_date=arguments.get("document_date"),
             )
             result = [TextContent(type="text", text=f"Memory stored with ID: {mem_id}")]

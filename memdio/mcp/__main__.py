@@ -138,7 +138,10 @@ def handle_tool_call(name, arguments):
         storage = _get_storage()
 
         if name == "store_memory":
-            mem_id = storage.store(arguments["content"], arguments.get("tags"))
+            from memdio.core.llm import store_llm
+            mem_id = storage.remember(
+                arguments["content"], llm=store_llm(), tags=arguments.get("tags")
+            )
             return f"Memory stored with ID: {mem_id}", False
 
         elif name == "retrieve_memory":
