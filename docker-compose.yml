@@ -1,0 +1,19 @@
+services:
+  memdio-api:
+    build: .
+    command: memdio serve
+    ports:
+      - "8000:8000"
+    environment:
+      DATA_ROOT: /data/memdio
+    volumes:
+      - memdio-data:/data/memdio
+
+  # ced-localai:
+  #   image: your-ced-localai-image
+  #   command: ["sh", "-c", "echo 'Placeholder for ced.cpp + LocalAI stack'"]
+  #   # This service is intentionally commented out because it depends on
+  #   # external models, audio devices, and host-specific setup not included here.
+
+volumes:
+  memdio-data:
