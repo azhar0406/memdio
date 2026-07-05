@@ -96,22 +96,6 @@ async def store_memory(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/memories/{mem_id}")
-async def retrieve_memory(
-    mem_id: str,
-    storage: StorageManager = Depends(get_storage),
-):
-    """Retrieve a memory by ID (decodes from audio)."""
-    try:
-        content = storage.retrieve(mem_id)
-        return MemoryResponse(id=mem_id, content=content)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Memory not found")
-    except Exception:
-        logger.exception("Error retrieving memory")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
 @app.get("/memories")
 async def list_memories(
     query: str = "",
@@ -162,6 +146,22 @@ async def temporal_search_endpoint(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@app.get("/memories/{mem_id}")
+async def retrieve_memory(
+    mem_id: str,
+    storage: StorageManager = Depends(get_storage),
+):
+    """Retrieve a memory by ID (decodes from audio)."""
+    try:
+        content = storage.retrieve(mem_id)
+        return MemoryResponse(id=mem_id, content=content)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    except Exception:
+        logger.exception("Error retrieving memory")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @app.delete("/memories/{mem_id}")
 async def delete_memory(
     mem_id: str,
@@ -169,8 +169,12 @@ async def delete_memory(
 ):
     """Delete a memory."""
     try:
-        storage.delete(mem_id)
+        deleted = storage.delete(mem_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Memory not found")
         return {"status": "deleted", "id": mem_id}
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("Error deleting memory")
         raise HTTPException(status_code=500, detail="Internal server error")

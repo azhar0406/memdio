@@ -99,7 +99,9 @@ def delete(
 ):
     """Delete a memory"""
     try:
-        _get_storage().delete(mem_id)
+        deleted = _get_storage().delete(mem_id)
+        if not deleted:
+            raise KeyError(mem_id)
         typer.echo(f"Memory {mem_id} deleted")
     except KeyError:
         typer.echo(f"Memory {mem_id} not found")

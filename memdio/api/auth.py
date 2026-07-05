@@ -22,6 +22,7 @@ def _save_keys(keys: dict):
     os.makedirs(os.path.dirname(KEYS_FILE), exist_ok=True)
     with open(KEYS_FILE, "w") as f:
         json.dump(keys, f, indent=2)
+    os.chmod(KEYS_FILE, 0o600)
 
 
 def _hash_key(api_key: str) -> str:

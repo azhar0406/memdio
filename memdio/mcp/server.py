@@ -1,6 +1,7 @@
 """MCP server for memdio — exposes memory tools via stdio transport."""
 
 import logging
+import os
 import sys
 import time
 
@@ -12,7 +13,7 @@ from memdio.core.validators import ValidationError
 
 # Log to stderr so it doesn't corrupt stdio JSON transport
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=getattr(logging, os.environ.get("MEMDIO_LOG_LEVEL", "INFO").upper(), logging.INFO),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     stream=sys.stderr,
 )
@@ -21,6 +22,15 @@ logger = logging.getLogger("memdio.mcp")
 server = Server("memdio")
 
 _storage_instance = None
+
+
+def _redact_arguments(arguments: dict) -> dict:
+    if not isinstance(arguments, dict):
+        return arguments
+    redacted = dict(arguments)
+    if "content" in redacted:
+        redacted["content"] = "<redacted>"
+    return redacted
 
 
 def _get_storage():
@@ -132,7 +142,7 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    logger.info(">>> TOOL CALL: %s | args: %s", name, arguments)
+    logger.info(">>> TOOL CALL: %s | args: %s", name, _redact_arguments(arguments))
     t0 = time.perf_counter()
 
     try:
@@ -170,8 +180,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 result = [TextContent(type="text", text="\n".join(lines))]
 
         elif name == "delete_memory":
-            storage.delete(arguments["memory_id"])
-            result = [TextContent(type="text", text=f"Memory {arguments['memory_id']} deleted.")]
+            deleted = storage.delete(arguments["memory_id"])
+            if deleted is False:
+                result = [TextContent(type="text", text=f"Memory {arguments['memory_id']} not found.")]
+            else:
+                result = [TextContent(type="text", text=f"Memory {arguments['memory_id']} deleted.")]
 
         elif name == "semantic_search":
             top_k = arguments.get("top_k", 5)
@@ -196,7 +209,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         result = [TextContent(type="text", text="An internal error occurred. Check server logs.")]
 
     elapsed = time.perf_counter() - t0
-    logger.info("<<< TOOL DONE: %s | %.3fs | response: %s", name, elapsed, result[0].text[:100])
+    logger.info("<<< TOOL DONE: %s | %.3fs | response_chars: %d", name, elapsed, len(result[0].text))
     return result
 
 

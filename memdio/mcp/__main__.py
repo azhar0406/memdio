@@ -13,7 +13,7 @@ import sys
 import time
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=getattr(logging, os.environ.get("MEMDIO_LOG_LEVEL", "INFO").upper(), logging.INFO),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     stream=sys.stderr,
 )
@@ -98,6 +98,15 @@ TOOLS = [
 _storage = None
 
 
+def _redact_arguments(arguments):
+    if not isinstance(arguments, dict):
+        return arguments
+    redacted = dict(arguments)
+    if "content" in redacted:
+        redacted["content"] = "<redacted>"
+    return redacted
+
+
 def _get_storage():
     global _storage
     if _storage is None:
@@ -144,7 +153,7 @@ def handle_tool_call(name, arguments):
         elif name == "delete_memory":
             deleted = storage.delete(arguments["memory_id"])
             if deleted is False:
-                return f"Memory {arguments['memory_id']} was already deleted.", False
+                return f"Memory {arguments['memory_id']} not found.", False
             return f"Memory {arguments['memory_id']} deleted.", False
 
         elif name == "semantic_search":
@@ -216,13 +225,13 @@ def handle_message(msg):
         params = msg.get("params", {})
         name = params.get("name", "")
         arguments = params.get("arguments", {})
-        logger.info(">>> TOOL CALL: %s | args: %s", name, arguments)
+        logger.info(">>> TOOL CALL: %s | args: %s", name, _redact_arguments(arguments))
         t0 = time.perf_counter()
 
         text, is_error = handle_tool_call(name, arguments)
 
         elapsed = time.perf_counter() - t0
-        logger.info("<<< TOOL DONE: %s | %.3fs | response: %s", name, elapsed, text[:100])
+        logger.info("<<< TOOL DONE: %s | %.3fs | response_chars: %d", name, elapsed, len(text))
 
         send({
             "jsonrpc": "2.0",
