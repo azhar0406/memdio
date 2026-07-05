@@ -1,9 +1,42 @@
 import pytest
+import numpy as np
 
+from memdio.core.storage import StorageManager
 from memdio.core.validators import ValidationError
 
 
 class TestStorageManager:
+    def test_default_embed_model_uses_384_dim_and_semantic_search_works(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("MEMDIO_EMBED_MODEL", raising=False)
+
+        class FakeEmbedder:
+            def embed(self, texts):
+                for text in texts:
+                    vec = np.zeros(384, dtype=np.float32)
+                    if "hello" in text.lower():
+                        vec[0] = 1.0
+                    elif "goodbye" in text.lower():
+                        vec[1] = 1.0
+                    else:
+                        vec[2] = 1.0
+                    yield vec
+
+        monkeypatch.setattr(StorageManager, "_get_embedder", lambda self: FakeEmbedder())
+        storage = StorageManager(base_path=str(tmp_path / "memdio"))
+
+        try:
+            assert storage._vector_dim == 384
+            mem_id = storage.store("Hello semantic memdio")
+            assert storage.retrieve(mem_id) == "Hello semantic memdio"
+
+            if not storage._has_vector:
+                pytest.skip("sqlite-vector extension not available in this environment")
+
+            results = storage.semantic_search("hello", top_k=1)
+            assert results[0]["id"] == mem_id
+        finally:
+            storage.close()
+
     def test_store_and_retrieve(self, storage):
         mem_id = storage.store("Hello, memdio!")
         content = storage.retrieve(mem_id)

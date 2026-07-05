@@ -33,6 +33,12 @@ from memdio.core.validators import (
 logger = logging.getLogger(__name__)
 
 VECTOR_DIM = 384  # BAAI/bge-small-en-v1.5 output dimension
+DEFAULT_EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+MODEL_DIMS = {
+    "BAAI/bge-small-en-v1.5": 384,
+    "BAAI/bge-large-en-v1.5": 1024,
+    "mixedbread-ai/mxbai-embed-large-v1": 1024,
+}
 
 # Contradiction detection threshold — cosine similarity above this = likely same topic
 SIMILARITY_THRESHOLD_CONTRADICTION = 0.85
@@ -190,10 +196,14 @@ class StorageManager:
     """SQLite + FLAC + FTS5 + sqlite-vector — one DB, zero external files."""
 
     def __init__(self, base_path=None):
+        global VECTOR_DIM
         if base_path is None:
             base_path = os.path.expanduser("~/memdio")
         self.base_path = base_path
         self.db_path = os.path.join(base_path, "index.db")
+        self._embed_model_name = os.getenv("MEMDIO_EMBED_MODEL", DEFAULT_EMBED_MODEL)
+        self._vector_dim = MODEL_DIMS.get(self._embed_model_name, MODEL_DIMS[DEFAULT_EMBED_MODEL])
+        VECTOR_DIM = self._vector_dim
 
         os.makedirs(base_path, exist_ok=True)
 
@@ -315,9 +325,9 @@ class StorageManager:
                 if "embedding" not in cols:
                     c.execute("ALTER TABLE memories ADD COLUMN embedding BLOB")
                 self._conn.execute(
-                    f"SELECT vector_init('memories', 'embedding', 'dimension={VECTOR_DIM},type=FLOAT32,distance=COSINE')"
+                    f"SELECT vector_init('memories', 'embedding', 'dimension={self._vector_dim},type=FLOAT32,distance=COSINE')"
                 )
-                logger.info("sqlite-vector initialized (dim=%d, COSINE)", VECTOR_DIM)
+                logger.info("sqlite-vector initialized (dim=%d, COSINE)", self._vector_dim)
             except Exception as e:
                 logger.warning("sqlite-vector init failed: %s", e)
                 self._has_vector = False
@@ -330,8 +340,8 @@ class StorageManager:
             try:
                 from fastembed import TextEmbedding
 
-                self._embedder = TextEmbedding("BAAI/bge-small-en-v1.5")
-                logger.info("Loaded embedding model: BAAI/bge-small-en-v1.5 (ONNX)")
+                self._embedder = TextEmbedding(self._embed_model_name)
+                logger.info("Loaded embedding model: %s (ONNX)", self._embed_model_name)
             except Exception as e:
                 self._has_vector = False
                 logger.warning("Embedding model unavailable, disabling semantic features: %s", e)
@@ -515,13 +525,15 @@ class StorageManager:
             return []
         fts_query = " OR ".join(f'"{w}"' for w in words)
 
+        cols = "m.id, m.content, m.created_at, m.tags, m.event_date, m.document_date"
         if include_superseded:
-            sql = "SELECT m.id, m.content, m.created_at, m.tags FROM memories_fts f JOIN memories m ON f.id = m.id WHERE memories_fts MATCH ? ORDER BY rank LIMIT 100"
+            sql = f"SELECT {cols} FROM memories_fts f JOIN memories m ON f.id = m.id WHERE memories_fts MATCH ? ORDER BY rank LIMIT 100"
         else:
-            sql = "SELECT m.id, m.content, m.created_at, m.tags FROM memories_fts f JOIN memories m ON f.id = m.id WHERE memories_fts MATCH ? AND m.is_current = 1 ORDER BY rank LIMIT 100"
+            sql = f"SELECT {cols} FROM memories_fts f JOIN memories m ON f.id = m.id WHERE memories_fts MATCH ? AND m.is_current = 1 ORDER BY rank LIMIT 100"
 
         rows = self._conn.execute(sql, (fts_query,)).fetchall()
-        return [{"id": r[0], "content": r[1], "created_at": r[2], "tags": r[3]} for r in rows]
+        return [{"id": r[0], "content": r[1], "created_at": r[2], "tags": r[3],
+                 "event_date": r[4], "document_date": r[5]} for r in rows]
 
     def search_by_tag(self, tag):
         """Search memories by exact tag match. Uses idx_memories_tags index."""
@@ -671,7 +683,7 @@ class StorageManager:
         meta_table = self._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='memdio_meta'"
         ).fetchone()
-        current_model = "BAAI/bge-small-en-v1.5"
+        current_model = self._embed_model_name
         needs_reembed = False
 
         if not meta_table:
@@ -705,7 +717,7 @@ class StorageManager:
         # Vector similarity search
         current_filter = "" if include_superseded else "AND m.is_current = 1"
         rows = self._conn.execute(
-            f"""SELECT m.id, m.content, m.created_at, v.distance
+            f"""SELECT m.id, m.content, m.created_at, v.distance, m.event_date, m.document_date
                 FROM vector_full_scan('memories', 'embedding', ?, ?) v
                 JOIN memories m ON m.rowid = v.rowid
                 {current_filter}""",
@@ -714,7 +726,8 @@ class StorageManager:
 
         results = []
         for r in rows:
-            results.append({"id": r[0], "content": r[1], "created_at": r[2], "score": 1.0 - r[3]})
+            results.append({"id": r[0], "content": r[1], "created_at": r[2], "score": 1.0 - r[3],
+                            "event_date": r[4], "document_date": r[5]})
             if len(results) >= top_k:
                 break
 
