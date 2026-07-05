@@ -199,17 +199,30 @@ The benchmark-winning pipeline is available as first-class `StorageManager` meth
 It is provider-agnostic — you supply an `llm(prompt) -> str` callable, so memdio core
 never depends on a specific LLM SDK.
 
+**Extraction backends.** `memdio.core.llm.default_llm()` builds that callable from your
+environment and works with **OpenAI, Claude, OpenRouter, Ollama, and llama.cpp** — the
+OpenAI-compatible ones (OpenAI/OpenRouter/Ollama/llama.cpp) go through the `openai` SDK,
+while Claude uses the native `anthropic` SDK. Install a backend with `pip install -e .[llm]`
+(OpenAI-compatible) and/or `.[anthropic]` (Claude).
+
+```bash
+# pick a provider (auto-detected from whichever key is set if unset)
+export MEMDIO_LLM_PROVIDER=anthropic         # openai | openrouter | anthropic | ollama | llamacpp
+export ANTHROPIC_API_KEY=sk-ant-...           # cheap/fast default model: claude-haiku-4-5
+# or OpenAI:      OPENAI_API_KEY=...           (default gpt-4o-mini)
+# or OpenRouter:  OPENROUTER_API_KEY=...       (default google/gemini-2.5-flash)
+# or local:       MEMDIO_LLM_PROVIDER=ollama   (http://localhost:11434/v1, default llama3.1)
+#                 MEMDIO_LLM_PROVIDER=llamacpp (http://localhost:8080/v1)
+# override the model with MEMDIO_EXTRACT_MODEL; a custom OpenAI-compatible server with
+# MEMDIO_LLM_BASE_URL (+ MEMDIO_LLM_API_KEY).
+```
+
 ```python
 from memdio.core.storage import StorageManager
+from memdio.core.llm import default_llm
 
 sm = StorageManager(base_path="~/memdio")
-
-# your LLM (any provider) as a prompt -> text callable
-def llm(prompt: str) -> str:
-    return client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-    ).choices[0].message.content
+llm = default_llm()   # built from env (OpenAI/Claude/OpenRouter/Ollama/llama.cpp); None if unset
 
 # remember: stores the raw memory AND its extracted atomic facts (tags='fact')
 sm.remember("I bought a 20-pound bag of layer feed at the farm store.",
