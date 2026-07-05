@@ -153,5 +153,17 @@ benchmarks/checkpoints/
 
 # MemoryBench provider
 memorybench-provider/node_modules/
-memorybench-provider/dist/.squad/
+memorybench-provider/dist/
+
+# Squad multi-agent collaboration artifacts
 .squad/
+locks/
+
+# Per-tool agent instruction stubs (squad-generated, near-identical)
+AGENTS.md
+GEMINI.md
+WARP.md
+CLAUDE.md
+
+# uv lockfile (regenerate with `uv lock` if you standardize on uv)
+uv.lock
