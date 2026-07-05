@@ -43,16 +43,10 @@ SIMILARITY_THRESHOLD_EXTENDS = 0.50
 def _signal_to_flac_blob(signal: np.ndarray, sample_rate: int) -> bytes:
     """Encode signal as FLAC bytes in memory."""
     import soundfile as sf
-    import tempfile
 
-    fp = tempfile.mktemp(suffix=".flac")
-    try:
-        sf.write(fp, signal, sample_rate)
-        with open(fp, "rb") as f:
-            return f.read()
-    finally:
-        if os.path.exists(fp):
-            os.remove(fp)
+    buf = io.BytesIO()
+    sf.write(buf, signal, sample_rate, format="FLAC")
+    return buf.getvalue()
 
 
 def _flac_blob_to_signal(blob: bytes) -> tuple[np.ndarray, int]:
@@ -333,9 +327,15 @@ class StorageManager:
     def _get_embedder(self):
         """Lazy-load FastEmbed ONNX model — no PyTorch, 284MB RAM."""
         if self._embedder is None:
-            from fastembed import TextEmbedding
-            self._embedder = TextEmbedding("BAAI/bge-small-en-v1.5")
-            logger.info("Loaded embedding model: BAAI/bge-small-en-v1.5 (ONNX)")
+            try:
+                from fastembed import TextEmbedding
+
+                self._embedder = TextEmbedding("BAAI/bge-small-en-v1.5")
+                logger.info("Loaded embedding model: BAAI/bge-small-en-v1.5 (ONNX)")
+            except Exception as e:
+                self._has_vector = False
+                logger.warning("Embedding model unavailable, disabling semantic features: %s", e)
+                raise RuntimeError("embedding model unavailable") from e
         return self._embedder
 
     def _embed(self, text: str) -> list[float]:
@@ -350,7 +350,7 @@ class StorageManager:
 
         query_vec = json.dumps(embedding)
         rows = self._conn.execute(
-            f"""SELECT m.id, m.content, m.created_at, v.distance
+            """SELECT m.id, m.content, m.created_at, v.distance
                 FROM vector_full_scan('memories', 'embedding', ?, ?) v
                 JOIN memories m ON m.rowid = v.rowid
                 WHERE m.is_current = 1""",
@@ -437,12 +437,22 @@ class StorageManager:
         # Always compute embedding if vector extension available
         embedding = None
         if self._has_vector:
-            embedding = self._embed(content)
-            self._conn.execute(
-                "INSERT INTO memories (id, content, tags, encoder_version, flac_blob, embedding, document_date, event_date) "
-                "VALUES (?,?,?,?,?,vector_as_f32(?),?,?)",
-                (mem_id, content, tags, encoder_version, flac_blob, json.dumps(embedding), document_date, event_date),
-            )
+            try:
+                embedding = self._embed(content)
+            except RuntimeError:
+                embedding = None
+            if embedding is not None:
+                self._conn.execute(
+                    "INSERT INTO memories (id, content, tags, encoder_version, flac_blob, embedding, document_date, event_date) "
+                    "VALUES (?,?,?,?,?,vector_as_f32(?),?,?)",
+                    (mem_id, content, tags, encoder_version, flac_blob, json.dumps(embedding), document_date, event_date),
+                )
+            else:
+                self._conn.execute(
+                    "INSERT INTO memories (id, content, tags, encoder_version, flac_blob, document_date, event_date) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (mem_id, content, tags, encoder_version, flac_blob, document_date, event_date),
+                )
         else:
             self._conn.execute(
                 "INSERT INTO memories (id, content, tags, encoder_version, flac_blob, document_date, event_date) "
@@ -584,6 +594,7 @@ class StorageManager:
         self._conn.execute("DELETE FROM memories WHERE id=?", (mem_id,))
         self._conn.commit()
         logger.info("Deleted memory %s", mem_id)
+        return True
 
     def get_info(self, mem_id):
         """Get metadata by PRIMARY KEY — O(1)."""
@@ -651,7 +662,10 @@ class StorageManager:
             raise RuntimeError("sqlite-vector extension not available")
 
         # Embed query
-        query_vec = json.dumps(self._embed(query))
+        try:
+            query_vec = json.dumps(self._embed(query))
+        except RuntimeError as e:
+            raise RuntimeError("sqlite-vector extension not available") from e
 
         # Backfill/re-embed: rows without embeddings OR stale embeddings from old model
         meta_table = self._conn.execute(

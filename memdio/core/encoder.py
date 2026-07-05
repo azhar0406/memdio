@@ -4,13 +4,16 @@ import struct
 import zlib
 
 import numpy as np
-from scipy.signal import find_peaks
 
 # Header format: magic (4 bytes) + version (1 byte) + data_length (4 bytes) + crc32 (4 bytes)
 HEADER_MAGIC = b"MEM3"
 HEADER_VERSION = 2
 HEADER_FORMAT = "<4sBII"  # little-endian: 4s magic, B version, I data_len, I crc32
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+
+
+class DecodeError(ValueError):
+    """Raised when an encoded memory blob cannot be recovered."""
 
 
 class SimpleEncoder:
@@ -146,12 +149,19 @@ class BinaryEncoder:
         # Decode ECC if available
         try:
             from memdio.core.ecc import ReedSolomonECC
+            from reedsolo import ReedSolomonError
+
             ecc = ReedSolomonECC()
             decompressed_payload = ecc.decode(payload)
         except ImportError:
             decompressed_payload = payload
+        except ReedSolomonError as e:
+            raise DecodeError("unrecoverable/corrupt memory blob") from e
 
-        return zlib.decompress(decompressed_payload).decode("utf-8")
+        try:
+            return zlib.decompress(decompressed_payload).decode("utf-8")
+        except zlib.error as e:
+            raise DecodeError("unrecoverable/corrupt memory blob") from e
 
     def encode(self, text: str) -> np.ndarray:
         """Encode text to audio signal."""

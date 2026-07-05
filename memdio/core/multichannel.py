@@ -23,6 +23,8 @@ import zlib
 
 import numpy as np
 
+from memdio.core.encoder import DecodeError
+
 HEADER_MAGIC = b"MC3M"  # Multi-Channel memdio
 HEADER_VERSION = 3
 HEADER_FORMAT = "<4sBII"
@@ -104,12 +106,19 @@ class MultiChannelEncoder:
 
         try:
             from memdio.core.ecc import ReedSolomonECC
+            from reedsolo import ReedSolomonError
+
             ecc = ReedSolomonECC()
             payload = ecc.decode(payload)
         except ImportError:
             pass
+        except ReedSolomonError as e:
+            raise DecodeError("unrecoverable/corrupt memory blob") from e
 
-        return zlib.decompress(payload).decode("utf-8")
+        try:
+            return zlib.decompress(payload).decode("utf-8")
+        except zlib.error as e:
+            raise DecodeError("unrecoverable/corrupt memory blob") from e
 
     def _bytes_to_slots(self, data: bytes) -> list[tuple[int, int, int, int]]:
         """Split bytes into 3-byte chunks, each chunk -> 4 x 6-bit values."""
