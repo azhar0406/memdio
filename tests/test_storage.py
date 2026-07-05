@@ -33,7 +33,8 @@ class TestStorageManager:
 
     def test_delete(self, storage):
         mem_id = storage.store("to be deleted")
-        storage.delete(mem_id)
+        result = storage.delete(mem_id)
+        assert result is True
         with pytest.raises(KeyError):
             storage.retrieve(mem_id)
 
@@ -65,3 +66,10 @@ class TestStorageManager:
     def test_validation_oversized_content(self, storage):
         with pytest.raises(ValidationError):
             storage.store("x" * 1_100_000)
+
+    def test_semantic_search_raises_when_vector_unavailable(self, storage):
+        # When the sqlite-vector extension is unavailable, semantic search must
+        # fail loudly (intentional degraded state) rather than silently return [].
+        storage._has_vector = False
+        with pytest.raises(RuntimeError):
+            storage.semantic_search("anything")

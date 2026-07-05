@@ -1,7 +1,17 @@
+import struct
+import zlib
+
 import numpy as np
 import pytest
 
-from memdio.core.encoder import BinaryEncoder, SimpleEncoder
+from memdio.core.encoder import (
+    HEADER_FORMAT,
+    HEADER_MAGIC,
+    HEADER_VERSION,
+    DecodeError,
+    BinaryEncoder,
+    SimpleEncoder,
+)
 
 
 class TestSimpleEncoder:
@@ -60,3 +70,12 @@ class TestBinaryEncoder:
         # Truncate heavily
         with pytest.raises(ValueError):
             enc.decode(signal[: len(signal) // 4])
+
+    def test_corrupt_blob_raises_decode_error(self):
+        enc = BinaryEncoder()
+        payload = b"not-a-valid-ecc-or-zlib-payload"
+        crc = zlib.crc32(payload) & 0xFFFFFFFF
+        blob = struct.pack(HEADER_FORMAT, HEADER_MAGIC, HEADER_VERSION, len(payload), crc)
+
+        with pytest.raises(DecodeError, match="corrupt memory blob"):
+            enc._extract_data(blob + payload)
