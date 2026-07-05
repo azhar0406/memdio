@@ -124,9 +124,35 @@ API keys are stored as SHA-256 hashes in the configured `MEMDIO_KEYS_FILE`; raw 
 
 ## LongMemEval Benchmark
 
-Evaluated on [LongMemEval](https://github.com/xiaowu0162/LongMemEval) — 500 questions across 6 task types. All models via OpenRouter, context window 2,000 chars per memory, Top-K 10.
+Evaluated on [LongMemEval](https://github.com/xiaowu0162/LongMemEval) — 500 questions across 6 task types.
 
-### Overall Results
+### Hybrid fact-extraction (v2) — gpt-4o
+
+memdio's memory layer can store two representations of every conversation on top of the
+same audio storage: the **raw session** (episodic) and **LLM-extracted atomic facts**
+(semantic). Retrieval surfaces raw sessions for detail questions and discrete facts for
+aggregation/temporal questions. Enable with `MEMDIO_EXTRACT=1`.
+
+Config: gpt-4o answerer, `google/gemini-2.5-flash` extractor + judge, Top-K 20, 4,000
+chars/memory, **stratified n=48** (8 per task type, seed 42).
+
+| Task Type | memdio (hybrid) |
+|-----------|-----------------|
+| Single-session (user) | 100.0% |
+| Single-session (assistant) | 100.0% |
+| Single-session (preference) | 37.5% |
+| Knowledge update | 87.5% |
+| Multi-session | 25.0% |
+| Temporal reasoning | 62.5% |
+| **Overall** | **68.8%** |
+
+For context, published LongMemEval-class results: **mem0 ~67%** (LOCOMO), **Zep 71%**
+(LongMemEval, gpt-4o), **Supermemory 85.4%** (LongMemEval-S). Numbers are not perfectly
+comparable (different judges/subsets/benchmarks), but on the same benchmark and answer
+model memdio's hybrid layer reaches the mem0/Zep tier — up from ~50% for plain vector
+retrieval. Multi-session aggregation ("how many / total …") remains the hardest category.
+
+### Overall Results (v1, raw-vector retrieval)
 
 | Model | Task-Avg | Overall | Abstention |
 |-------|----------|---------|------------|
