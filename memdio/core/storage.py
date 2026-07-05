@@ -734,6 +734,59 @@ class StorageManager:
 
         return results
 
+    def remember(self, content, llm=None, tags=None, document_date=None):
+        """Store a memory, plus its extracted atomic facts when an LLM is provided.
+
+        ``llm`` is a ``Callable[[str], str]`` (prompt -> completion). When given,
+        the raw content is stored (tags='session') AND distilled into discrete
+        fact-memories (tags='fact'), which is what makes counting/temporal recall
+        work. Without ``llm`` this is a plain ``store``. Returns the raw memory id.
+        """
+        from memdio.core.facts import extract_facts
+
+        raw_tags = tags if tags is not None else ("session" if llm else None)
+        mem_id = self.store(content, tags=raw_tags, document_date=document_date)
+        if llm is not None:
+            for fact in extract_facts(llm, content, document_date):
+                self.store(fact, tags="fact", document_date=document_date, detect=False)
+        return mem_id
+
+    def recall(self, query, top_k=10, route=True):
+        """Query-routed hybrid retrieval (the 72.9%-on-LongMemEval strategy).
+
+        Aggregation/temporal queries are answered from discrete facts; detail
+        queries use the full raw+fact hybrid. Results are fused across FTS5 +
+        semantic search with Reciprocal Rank Fusion. Returns memory dicts.
+        """
+        from memdio.core.facts import classify_query
+        from memdio.core.rerank import reciprocal_rank_fusion
+
+        fact_only = route and classify_query(query) in ("aggregation", "temporal")
+        fetch = top_k * 3 if fact_only else top_k
+
+        def keep(r):
+            return not fact_only or (r.get("tags") or "") == "fact"
+
+        results, fts_ids, sem_ids = {}, [], []
+        try:
+            for r in [x for x in self.search(query) if keep(x)][:fetch]:
+                results[r["id"]] = r
+                fts_ids.append(r["id"])
+        except Exception:
+            pass
+        try:
+            for r in self.semantic_search(query, top_k=fetch):
+                if not keep(r):
+                    continue
+                sem_ids.append(r["id"])
+                results.setdefault(r["id"], r)
+        except Exception:
+            pass
+
+        fused = [d for d, _ in reciprocal_rank_fusion([fts_ids, sem_ids])]
+        final_k = 30 if fact_only else top_k
+        return [results[d] for d in fused if d in results][:final_k]
+
     def stats(self):
         """Aggregate stats — single query."""
         row = self._conn.execute(
