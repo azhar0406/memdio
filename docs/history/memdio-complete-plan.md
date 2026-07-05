@@ -1,3 +1,5 @@
+> Historical planning doc — see README.md for current state.
+
 # AudioMemory: Complete Production Implementation Guide
 
 ## Table of Contents

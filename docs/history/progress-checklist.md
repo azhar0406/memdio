@@ -1,3 +1,5 @@
+> Historical planning doc — see README.md for current state.
+
 # memdio Production Implementation Progress Checklist
 
 ## Phase 1: MVP - Basic Memory Clone (Current Focus)

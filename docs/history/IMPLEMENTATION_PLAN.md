@@ -1,3 +1,5 @@
+> Historical planning doc — see README.md for current state.
+
 # Implementation Plan: memdio as an MCP Server
 
 Based on the basic-memory project, here's how we'll implement memdio to work similarly:

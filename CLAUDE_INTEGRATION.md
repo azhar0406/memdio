@@ -1,74 +1,91 @@
 # Using memdio with Claude Desktop
 
-## Setup
+## Claude Desktop Setup
 
 1. Install memdio:
    ```bash
    pip install -e .
    ```
 
-2. Configure Claude Desktop by adding this to your `~/Library/Application Support/Claude/claude_desktop_config.json`:
+2. Configure Claude Desktop by adding this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
    ```json
    {
      "mcpServers": {
        "memdio": {
-         "command": "memdio",
-         "args": ["mcp"]
+         "command": "/path/to/venv/bin/python",
+         "args": ["-u", "-m", "memdio.mcp"]
        }
      }
    }
    ```
 
-3. Start the memdio MCP server:
+3. Restart Claude Desktop. It will launch the MCP server on demand when you invoke memdio tools.
+
+## Available MCP Tools
+
+Claude can use these tools once the MCP server is configured:
+
+- `store_memory`
+- `retrieve_memory`
+- `search_memories`
+- `semantic_search`
+- `list_memories`
+- `delete_memory`
+
+## REST API Setup
+
+memdio also exposes a local REST API:
+
+1. Start the server:
    ```bash
-   memdio mcp
+   memdio serve
    ```
 
-## Usage in Claude Conversations
+2. Create an API key for a user:
+   ```bash
+   memdio create-key alice
+   ```
 
-Once configured, you can use memdio directly in your conversations with Claude:
+3. Use the returned key as a Bearer token on every request.
 
-### Storing Memories
-```
-Claude, please store this conversation summary using memdio:
-"Today we discussed the memdio project implementation and tested the MCP integration."
-```
+The REST API listens on `http://localhost:8000`.
 
-### Retrieving Memories
-```
-Claude, can you retrieve my previous conversation about memdio?
-```
+## REST API Examples
 
-### Searching Memories
-```
-Claude, find all memories related to MCP integration.
-```
+Create a memory:
 
-## API Usage
-
-You can also interact with memdio programmatically:
-
-### Create a Memory
 ```bash
-curl -X POST http://127.0.0.1:3141/memories \
+curl -X POST http://localhost:8000/memories \
+  -H "Authorization: Bearer memdio_xxxx" \
   -H "Content-Type: application/json" \
   -d '{"content": "This is a test memory", "tags": "test,example"}'
 ```
 
-### Retrieve a Memory
+Retrieve a memory:
+
 ```bash
-curl -X GET http://127.0.0.1:3141/memories/<memory-id>
+curl http://localhost:8000/memories/<memory-id> \
+  -H "Authorization: Bearer memdio_xxxx"
 ```
 
-### Search Memories
+Search memories:
+
 ```bash
-curl -X GET "http://127.0.0.1:3141/memories?query=test"
+curl "http://localhost:8000/memories?query=test" \
+  -H "Authorization: Bearer memdio_xxxx"
 ```
 
-## File Storage
+## Storage Model
 
-memdio stores memories in:
-- Audio files: `~/memdio/memory/*.flac`
-- Metadata: `~/memdio/index.db` (SQLite database)
+memdio stores all user data in a per-user SQLite database rooted at `DATA_ROOT`:
 
-This allows you to access your memories even outside of Claude Desktop.
+```text
+DATA_ROOT/
+  users/
+    alice/
+      index.db
+    bob/
+      index.db
+```
+
+Each user's `index.db` contains their encoded FLAC blobs plus the search indexes and metadata. There is no shared `~/memdio/*.flac` or global `~/memdio/index.db` layout in the current implementation.

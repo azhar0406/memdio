@@ -1,3 +1,5 @@
+> Historical planning doc — see README.md for current state.
+
 # memdio - Phase 1 MVP Implementation Plan
 
 ## Goal
