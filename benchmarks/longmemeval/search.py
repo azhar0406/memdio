@@ -22,18 +22,47 @@ _MONTH_NAMES = {
 }
 
 
+# Aggregation/counting questions ("how many kits", "total weight", "how often").
+# Counting/totalling questions. Deliberately excludes "how long" (a duration query,
+# best answered from the raw session's anchor date, not by counting facts).
+_AGG_PATTERNS = re.compile(
+    r'\bhow many\b|\bhow much\b|\bhow often\b|\bnumber of\b|\btotal\b|\bcount\b'
+    r'|\bhow frequently\b|\btimes\b',
+    re.IGNORECASE,
+)
+
+
+def classify_query(query: str) -> str:
+    """Aggregation/temporal questions answer best from discrete dated facts;
+    detail questions answer best from the full raw+fact hybrid."""
+    if _AGG_PATTERNS.search(query):
+        return "aggregation"
+    if _TEMPORAL_PATTERNS.search(query):
+        return "temporal"
+    return "detail"
+
+
 def hybrid_search(storage: StorageManager, query: str, top_k: int = SEARCH_TOP_K) -> list[dict]:
     """Combine FTS5 + semantic + temporal + relation expansion."""
     rerank_mode = os.getenv("MEMDIO_RERANK", "1")
+
+    # Route aggregation/temporal queries through the SAME pipeline but restricted to
+    # discrete facts (raw sessions crowd out the countable facts these questions need).
+    fact_only = os.getenv("MEMDIO_ROUTE") == "1" and classify_query(query) in ("aggregation", "temporal")
+    fetch_k = top_k * 3 if fact_only else top_k
+
     results = {}
     fts_ids = []
     sem_ids = []
     temporal_ids = []
 
+    def _keep(r):
+        return not fact_only or (r.get("tags") or "") == "fact"
+
     # FTS5 word search
     try:
         fts_results = storage.search(query)
-        for r in fts_results[:top_k]:
+        for r in [x for x in fts_results if _keep(x)][:fetch_k]:
             results[r["id"]] = r
             fts_ids.append(r["id"])
     except Exception:
@@ -41,8 +70,10 @@ def hybrid_search(storage: StorageManager, query: str, top_k: int = SEARCH_TOP_K
 
     # Semantic search
     try:
-        sem_results = storage.semantic_search(query, top_k=top_k)
+        sem_results = storage.semantic_search(query, top_k=fetch_k)
         for r in sem_results:
+            if not _keep(r):
+                continue
             sem_ids.append(r["id"])
             if r["id"] not in results:
                 results[r["id"]] = r
@@ -61,26 +92,31 @@ def hybrid_search(storage: StorageManager, query: str, top_k: int = SEARCH_TOP_K
                         end = f"{year}-{month_num}-28"
                         temporal_results = storage.temporal_search(start, end, top_k=5)
                         for r in temporal_results:
+                            if not _keep(r):
+                                continue
                             temporal_ids.append(r["id"])
                             if r["id"] not in results:
                                 results[r["id"]] = r
                     break
             else:
                 # Broad temporal search — last 5 years
-                temporal_results = storage.temporal_search("2020-01-01", "2027-12-31", top_k=top_k)
+                temporal_results = storage.temporal_search("2020-01-01", "2027-12-31", top_k=fetch_k)
                 for r in temporal_results:
+                    if not _keep(r):
+                        continue
                     temporal_ids.append(r["id"])
                     if r["id"] not in results:
                         results[r["id"]] = r
         except Exception:
             pass
 
+    final_k = 30 if fact_only else top_k
     if rerank_mode == "1":
         rankings = [fts_ids, sem_ids]
         if temporal_ids:
             rankings.append(temporal_ids)
         fused_ids = [doc_id for doc_id, _score in reciprocal_rank_fusion(rankings)]
-        ranked = [results[doc_id] for doc_id in fused_ids if doc_id in results][:top_k]
+        ranked = [results[doc_id] for doc_id in fused_ids if doc_id in results][:final_k]
     elif rerank_mode == "cross":
         fts_ranked = [results[rid] for rid in fts_ids if rid in results]
         sem_ranked = sorted(
@@ -97,7 +133,7 @@ def hybrid_search(storage: StorageManager, query: str, top_k: int = SEARCH_TOP_K
             key=lambda x: x.get("score", 0),
             reverse=True,
         )
-        ranked = (fts_ranked + sem_ranked)[:top_k]
+        ranked = (fts_ranked + sem_ranked)[:final_k]
 
     # Relation expansion — pull in related memories for multi-session reasoning
     seed_ids = list(results.keys()) if rerank_mode == "cross" else [r["id"] for r in ranked]
