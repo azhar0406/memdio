@@ -193,6 +193,38 @@ export OPENROUTER_API_KEY=your-key
 python -m benchmarks.longmemeval.run --model google/gemma-3-27b-it
 ```
 
+## Memory Intelligence API (`remember` / `recall`)
+
+The benchmark-winning pipeline is available as first-class `StorageManager` methods.
+It is provider-agnostic — you supply an `llm(prompt) -> str` callable, so memdio core
+never depends on a specific LLM SDK.
+
+```python
+from memdio.core.storage import StorageManager
+
+sm = StorageManager(base_path="~/memdio")
+
+# your LLM (any provider) as a prompt -> text callable
+def llm(prompt: str) -> str:
+    return client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+    ).choices[0].message.content
+
+# remember: stores the raw memory AND its extracted atomic facts (tags='fact')
+sm.remember("I bought a 20-pound bag of layer feed at the farm store.",
+            llm=llm, document_date="2023-05-20")
+
+# recall: query-routed hybrid retrieval — counting/temporal questions are answered
+# from discrete facts, detail questions from the raw+fact hybrid
+sm.recall("How many bags of feed have I bought?")   # -> fact-focused
+sm.recall("What did the store recommend?")          # -> raw+fact hybrid
+```
+
+`remember` without an `llm` is a plain store; `recall` needs no LLM (pure retrieval).
+This is the layer that reached **72.9%** on LongMemEval (above), storing both an
+episodic raw memory and its semantic facts — on top of the same FLAC-audio storage.
+
 ## How It Works
 
 ### Encoding Pipeline
