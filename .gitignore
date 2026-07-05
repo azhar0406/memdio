@@ -141,7 +141,6 @@ Thumbs.db
 
 # Claude Code / CI config
 .claude/
-.github/
 
 # Custom ignores for memdio
 memory_storage/
@@ -154,4 +153,5 @@ benchmarks/checkpoints/
 
 # MemoryBench provider
 memorybench-provider/node_modules/
-memorybench-provider/dist/
+memorybench-provider/dist/.squad/
+.squad/

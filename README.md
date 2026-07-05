@@ -105,6 +105,10 @@ curl http://localhost:8000/memories?query=meeting \
   -H "Authorization: Bearer memdio_xxxx"
 ```
 
+## Security
+
+API keys are stored as SHA-256 hashes in the configured `MEMDIO_KEYS_FILE`; raw keys are only shown when created. If an OpenRouter key may have been exposed, rotate it in OpenRouter and update the deployment environment. Do not commit `.env` files or raw provider keys.
+
 ## Limits
 
 | Parameter | Value |

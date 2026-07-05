@@ -1,5 +1,3 @@
-import pytest
-
 from memdio.core.ecc import ReedSolomonECC
 
 

@@ -1,8 +1,13 @@
 venv/
 .git/
-.github/
 .claude/
+.squad/
+.DS_Store
+.env
+tests/
+benchmarks/
 __pycache__/
 *.flac
+*.md
 *.pyc
 .pytest_cache/

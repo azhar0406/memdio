@@ -1,7 +1,6 @@
 """Input validation for memdio."""
 
 import re
-import uuid as _uuid
 
 MAX_CONTENT_SIZE = 1_048_576  # 1 MB
 MAX_QUERY_LENGTH = 1_000
