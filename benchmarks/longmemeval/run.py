@@ -2,7 +2,8 @@
 
 Usage:
     python -m benchmarks.longmemeval.run                          # all models
-    python -m benchmarks.longmemeval.run --model openai/gpt-4o    # single model
+    python -m benchmarks.longmemeval.run --model openai/gpt-4o    # single OpenRouter model
+    python -m benchmarks.longmemeval.run --provider openai --limit 5
     python -m benchmarks.longmemeval.run --resume <run_id>        # resume
     python -m benchmarks.longmemeval.run --limit 10               # quick test with 10 questions
     python -m benchmarks.longmemeval.run --workers 8              # parallel LLM calls
@@ -20,8 +21,14 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from dotenv import load_dotenv
 load_dotenv()
 
-from benchmarks.config import ANSWER_MODELS, CHECKPOINTS_DIR
-from benchmarks.longmemeval.answer import generate_answer, get_client
+from benchmarks.config import (
+    ANSWER_MODELS,
+    CHECKPOINTS_DIR,
+    JUDGE_MODEL,
+    OPENAI_ANSWER_MODELS,
+    OPENAI_JUDGE_MODEL,
+)
+from benchmarks.longmemeval.answer import distill_context, generate_answer, get_client
 from benchmarks.longmemeval.download import load_dataset
 from benchmarks.longmemeval.evaluate import evaluate_single, get_judge_client
 from benchmarks.longmemeval.ingest import cleanup_question_db, ingest_question
@@ -48,7 +55,14 @@ def load_checkpoint(run_id: str, model: str) -> tuple[dict, list[dict]]:
     return {}, []
 
 
-def process_question(question: dict, model: str, answer_client, judge_client) -> dict:
+def process_question(
+    question: dict,
+    model: str,
+    answer_client,
+    judge_client,
+    provider: str,
+    judge_model: str,
+) -> dict:
     """Process a single question: ingest -> search -> answer -> evaluate.
 
     Designed to run in a thread pool. Each question gets its own isolated DB.
@@ -69,10 +83,20 @@ def process_question(question: dict, model: str, answer_client, judge_client) ->
         search_results = hybrid_search(storage, question["question"])
         context = format_context(search_results, query=question["question"])
 
+        if os.getenv("MEMDIO_DISTILL") == "1":
+            distill_model = os.getenv("MEMDIO_DISTILL_MODEL", "google/gemini-2.5-flash")
+            context = distill_context(
+                answer_client, distill_model,
+                question["question"], context,
+                question_date=question.get("question_date", ""),
+                provider=provider,
+            )
+
         hypothesis = generate_answer(
             answer_client, model,
             question["question"], context,
             question_date=question.get("question_date", ""),
+            provider=provider,
         )
 
         eval_result = evaluate_single(
@@ -82,6 +106,8 @@ def process_question(question: dict, model: str, answer_client, judge_client) ->
             question=question["question"],
             reference_answer=question["answer"],
             hypothesis=hypothesis,
+            provider=provider,
+            judge_model=judge_model,
         )
         eval_result["hypothesis"] = hypothesis
         eval_result["num_memories_found"] = len(search_results)
@@ -98,15 +124,59 @@ def process_question(question: dict, model: str, answer_client, judge_client) ->
         cleanup_question_db(db_dir)
 
 
-def run_benchmark(model: str, run_id: str, limit: int | None = None, workers: int = 8):
+def stratified_sample(dataset: list[dict], n: int, seed: int = 42) -> list[dict]:
+    """Deterministically sample n questions balanced across question_type.
+
+    Round-robins across the task types (seeded shuffle within each), so a small
+    subset still exercises every LongMemEval task type. Stable for a given
+    (n, seed), so baseline and treatment runs draw an identical question set.
+    """
+    import random
+    from collections import defaultdict
+
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for q in dataset:
+        groups[q["question_type"]].append(q)
+
+    rng = random.Random(seed)
+    for g in groups.values():
+        rng.shuffle(g)
+
+    types = sorted(groups)
+    idx = {t: 0 for t in types}
+    picked: list[dict] = []
+    while len(picked) < n and any(idx[t] < len(groups[t]) for t in types):
+        for t in types:
+            if len(picked) >= n:
+                break
+            if idx[t] < len(groups[t]):
+                picked.append(groups[t][idx[t]])
+                idx[t] += 1
+    picked.sort(key=lambda q: q["question_id"])
+    return picked
+
+
+def run_benchmark(
+    model: str,
+    run_id: str,
+    limit: int | None = None,
+    workers: int = 8,
+    provider: str = "openrouter",
+    judge_model: str = JUDGE_MODEL,
+    stratified: int | None = None,
+    seed: int = 42,
+):
     """Run full benchmark pipeline with parallel execution."""
     print(f"\n{'=' * 60}")
     print(f"  LongMemEval Benchmark — {model}")
+    print(f"  Provider: {provider} | Judge: {judge_model}")
     print(f"  Run ID: {run_id} | Workers: {workers}")
     print(f"{'=' * 60}\n")
 
     dataset = load_dataset()
-    if limit:
+    if stratified:
+        dataset = stratified_sample(dataset, stratified, seed)
+    elif limit:
         dataset = dataset[:limit]
     print(f"Loaded {len(dataset)} questions")
 
@@ -123,8 +193,8 @@ def run_benchmark(model: str, run_id: str, limit: int | None = None, workers: in
         print_report(results, model=model)
         return results
 
-    answer_client = get_client()
-    judge_client = get_judge_client()
+    answer_client = get_client(provider)
+    judge_client = get_judge_client(provider)
 
     start_time = time.time()
     done_count = len(completed)
@@ -139,7 +209,13 @@ def run_benchmark(model: str, run_id: str, limit: int | None = None, workers: in
             future_to_q = {}
             for idx, question in batch:
                 future = executor.submit(
-                    process_question, question, model, answer_client, judge_client
+                    process_question,
+                    question,
+                    model,
+                    answer_client,
+                    judge_client,
+                    provider,
+                    judge_model,
                 )
                 future_to_q[future] = (idx, question)
 
@@ -174,18 +250,43 @@ def run_benchmark(model: str, run_id: str, limit: int | None = None, workers: in
 
 def main():
     parser = argparse.ArgumentParser(description="LongMemEval benchmark for memdio")
+    parser.add_argument("--provider", choices=["openrouter", "openai"], default="openrouter", help="Model provider to use")
     parser.add_argument("--model", type=str, help="Single model to test (default: all)")
+    parser.add_argument("--models", type=str, help="Comma-separated model list to test one by one")
+    parser.add_argument("--judge-model", type=str, help="Judge model override")
     parser.add_argument("--resume", type=str, help="Resume from run ID")
-    parser.add_argument("--limit", type=int, help="Limit number of questions (for testing)")
+    parser.add_argument("--limit", type=int, help="Limit to first N questions (for testing)")
+    parser.add_argument("--stratified", type=int, help="Sample N questions balanced across task types")
+    parser.add_argument("--seed", type=int, default=42, help="Seed for stratified sampling (default: 42)")
     parser.add_argument("--workers", type=int, default=8, help="Parallel workers for LLM calls (default: 8)")
     args = parser.parse_args()
 
     run_id = args.resume or str(uuid.uuid4())[:8]
-    models = [args.model] if args.model else ANSWER_MODELS
+    if args.models:
+        models = [m.strip() for m in args.models.split(",") if m.strip()]
+    elif args.model:
+        models = [args.model]
+    elif args.provider == "openai":
+        models = OPENAI_ANSWER_MODELS
+    else:
+        models = ANSWER_MODELS
+
+    judge_model = args.judge_model or (
+        OPENAI_JUDGE_MODEL if args.provider == "openai" else JUDGE_MODEL
+    )
 
     all_results = {}
     for model in models:
-        results = run_benchmark(model, run_id, limit=args.limit, workers=args.workers)
+        results = run_benchmark(
+            model,
+            run_id,
+            limit=args.limit,
+            workers=args.workers,
+            provider=args.provider,
+            judge_model=judge_model,
+            stratified=args.stratified,
+            seed=args.seed,
+        )
         all_results[model] = results
 
     if len(all_results) > 1:

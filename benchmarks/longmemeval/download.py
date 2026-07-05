@@ -16,7 +16,7 @@ def download_dataset(force: bool = False) -> str:
         print(f"Dataset already exists: {path}")
         return path
 
-    print(f"Downloading LongMemEval dataset...")
+    print("Downloading LongMemEval dataset...")
     urllib.request.urlretrieve(LONGMEMEVAL_URL, path)
 
     # Validate

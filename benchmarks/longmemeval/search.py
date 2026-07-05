@@ -1,8 +1,10 @@
 """Search memdio for relevant memories given a question."""
 
+import os
 import re
 
 from benchmarks.config import MAX_MEMORY_CHARS, SEARCH_TOP_K
+from memdio.core.rerank import cross_encoder_rerank, reciprocal_rank_fusion
 from memdio.core.storage import StorageManager
 
 # Patterns to detect temporal queries
@@ -22,8 +24,11 @@ _MONTH_NAMES = {
 
 def hybrid_search(storage: StorageManager, query: str, top_k: int = SEARCH_TOP_K) -> list[dict]:
     """Combine FTS5 + semantic + temporal + relation expansion."""
+    rerank_mode = os.getenv("MEMDIO_RERANK", "1")
     results = {}
     fts_ids = []
+    sem_ids = []
+    temporal_ids = []
 
     # FTS5 word search
     try:
@@ -38,6 +43,7 @@ def hybrid_search(storage: StorageManager, query: str, top_k: int = SEARCH_TOP_K
     try:
         sem_results = storage.semantic_search(query, top_k=top_k)
         for r in sem_results:
+            sem_ids.append(r["id"])
             if r["id"] not in results:
                 results[r["id"]] = r
     except Exception:
@@ -55,6 +61,7 @@ def hybrid_search(storage: StorageManager, query: str, top_k: int = SEARCH_TOP_K
                         end = f"{year}-{month_num}-28"
                         temporal_results = storage.temporal_search(start, end, top_k=5)
                         for r in temporal_results:
+                            temporal_ids.append(r["id"])
                             if r["id"] not in results:
                                 results[r["id"]] = r
                     break
@@ -62,22 +69,38 @@ def hybrid_search(storage: StorageManager, query: str, top_k: int = SEARCH_TOP_K
                 # Broad temporal search — last 5 years
                 temporal_results = storage.temporal_search("2020-01-01", "2027-12-31", top_k=top_k)
                 for r in temporal_results:
+                    temporal_ids.append(r["id"])
                     if r["id"] not in results:
                         results[r["id"]] = r
         except Exception:
             pass
 
-    # Rank: FTS matches first, then semantic by score
-    fts_ranked = [results[rid] for rid in fts_ids if rid in results]
-    sem_ranked = sorted(
-        [r for rid, r in results.items() if rid not in fts_ids],
-        key=lambda x: x.get("score", 0),
-        reverse=True,
-    )
-    ranked = (fts_ranked + sem_ranked)[:top_k]
+    if rerank_mode == "1":
+        rankings = [fts_ids, sem_ids]
+        if temporal_ids:
+            rankings.append(temporal_ids)
+        fused_ids = [doc_id for doc_id, _score in reciprocal_rank_fusion(rankings)]
+        ranked = [results[doc_id] for doc_id in fused_ids if doc_id in results][:top_k]
+    elif rerank_mode == "cross":
+        fts_ranked = [results[rid] for rid in fts_ids if rid in results]
+        sem_ranked = sorted(
+            [r for rid, r in results.items() if rid not in fts_ids],
+            key=lambda x: x.get("score", 0),
+            reverse=True,
+        )
+        ranked = fts_ranked + sem_ranked
+    else:
+        # Rank: FTS matches first, then semantic by score
+        fts_ranked = [results[rid] for rid in fts_ids if rid in results]
+        sem_ranked = sorted(
+            [r for rid, r in results.items() if rid not in fts_ids],
+            key=lambda x: x.get("score", 0),
+            reverse=True,
+        )
+        ranked = (fts_ranked + sem_ranked)[:top_k]
 
     # Relation expansion — pull in related memories for multi-session reasoning
-    seed_ids = [r["id"] for r in ranked]
+    seed_ids = list(results.keys()) if rerank_mode == "cross" else [r["id"] for r in ranked]
     try:
         related = storage.get_related_memories(seed_ids)
         for r in related:
@@ -85,6 +108,9 @@ def hybrid_search(storage: StorageManager, query: str, top_k: int = SEARCH_TOP_K
                 ranked.append(r)
     except Exception:
         pass
+
+    if rerank_mode == "cross":
+        return cross_encoder_rerank(query, ranked, top_n=top_k)
 
     return ranked[:top_k + 5]  # allow a few extra from relations
 
@@ -137,11 +163,11 @@ def format_context(results: list[dict], query: str = "") -> str:
         elif len(content) > MAX_MEMORY_CHARS:
             content = content[:MAX_MEMORY_CHARS] + "..."
 
+        # Prefer the real session/event date over created_at (the ingest timestamp).
+        date = r.get("document_date") or r.get("event_date") or r.get("created_at")
         header = f"[Memory {i}]"
-        if r.get("event_date"):
-            header += f" (event: {r['event_date']})"
-        elif r.get("created_at"):
-            header += f" (date: {r['created_at']})"
+        if date:
+            header += f" (date: {date})"
         if r.get("score"):
             header += f" (relevance: {r['score']:.3f})"
         if r.get("is_related"):
