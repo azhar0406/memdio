@@ -58,6 +58,55 @@ def search(
         raise typer.Exit(code=1)
 
 
+@app.command()
+def recall(
+    query: str = typer.Argument(..., help="Recall query"),
+    top_k: int = typer.Option(10, "-k", "--top-k", help="Number of results"),
+    no_route: bool = typer.Option(False, "--no-route", help="Disable query routing"),
+):
+    """Recall memories using routed hybrid search"""
+    try:
+        results = _get_storage().recall(query, top_k=top_k, route=not no_route)
+        if not results:
+            typer.echo("No memories found")
+            return
+
+        typer.echo(f"Found {len(results)} memory(s):")
+        for result in results:
+            typer.echo(f"  {result['id']}: {result['content'][:60]}...")
+    except Exception as e:
+        typer.echo(f"Error recalling memories: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def remember(
+    text: str = typer.Argument(..., help="Text to store as a memory"),
+    tags: Optional[str] = typer.Option(None, "-t", "--tags", help="Tags for the memory"),
+    no_extract: bool = typer.Option(False, "--no-extract", help="Skip fact extraction"),
+    date: Optional[str] = typer.Option(None, "--date", help="Document date for extraction"),
+):
+    """Store a memory with optional fact extraction"""
+    try:
+        llm = None
+        extraction_skipped = False
+        if not no_extract:
+            from memdio.core.llm import default_llm
+
+            llm = default_llm()
+            extraction_skipped = llm is None
+
+        mem_id = _get_storage().remember(text, llm=llm, tags=tags, document_date=date)
+        typer.echo(f"Memory stored with ID: {mem_id}")
+        if llm is not None:
+            typer.echo("Fact extraction ran")
+        elif extraction_skipped:
+            typer.echo("Fact extraction skipped: no LLM configured")
+    except Exception as e:
+        typer.echo(f"Error remembering memory: {e}")
+        raise typer.Exit(code=1)
+
+
 @app.command(name="tag-search")
 def tag_search(
     tag: str = typer.Argument(..., help="Tag to search for"),

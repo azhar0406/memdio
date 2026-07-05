@@ -86,6 +86,37 @@ def test_per_user_isolation(api):
     assert [r["content"] for r in alice_list.json()["results"]] == ["alice private"]
 
 
+def test_recall_returns_stored_content(api):
+    client, keys = api
+    stored = client.post(
+        "/memories",
+        json={"content": "alice remembers the blue umbrella"},
+        headers=_auth(keys["alice"]),
+    )
+    assert stored.status_code == 200
+
+    resp = client.get("/recall", params={"query": "blue umbrella"}, headers=_auth(keys["alice"]))
+    assert resp.status_code == 200
+    contents = [r["content"] for r in resp.json()["results"]]
+    assert "alice remembers the blue umbrella" in contents
+
+
+def test_recall_requires_auth(api):
+    client, _ = api
+    # No auth header at all -> rejected before handler.
+    missing = client.get("/recall", params={"query": "anything"})
+    assert missing.status_code in (401, 422)
+
+    # Invalid key -> 401.
+    bad = client.get(
+        "/recall",
+        params={"query": "anything"},
+        headers=_auth("memdio_definitely_wrong"),
+    )
+    assert bad.status_code == 401
+    assert bad.json()["detail"] == "Invalid API key"
+
+
 def test_user_id_comes_from_key_not_request(api):
     """A client cannot choose its user_id — it is resolved server-side from the key hash."""
     client, keys = api

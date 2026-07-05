@@ -146,6 +146,20 @@ async def temporal_search_endpoint(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@app.get("/recall")
+async def recall_endpoint(
+    query: str = Query(..., description="Recall query"),
+    top_k: int = Query(10, description="Number of results"),
+    storage: StorageManager = Depends(get_storage),
+):
+    """Query-routed hybrid retrieval (no LLM required)."""
+    try:
+        return {"results": storage.recall(query, top_k=top_k)}
+    except Exception:
+        logger.exception("Error in recall")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @app.get("/memories/{mem_id}")
 async def retrieve_memory(
     mem_id: str,

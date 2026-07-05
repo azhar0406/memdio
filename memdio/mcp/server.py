@@ -137,6 +137,24 @@ async def list_tools() -> list[Tool]:
                 "required": ["query"],
             },
         ),
+        Tool(
+            name="recall",
+            description="Query-routed hybrid retrieval — the best-performing recall pipeline. No LLM needed.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language query to recall memories for",
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "description": "Number of results to return (default 10)",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
     ]
 
 
@@ -195,6 +213,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 lines = [f"Found {len(results)} result(s):"]
                 for r in results:
                     lines.append(f"  [{r['score']:.3f}] {r['id']}: {r['content'][:80]}...")
+                result = [TextContent(type="text", text="\n".join(lines))]
+
+        elif name == "recall":
+            top_k = arguments.get("top_k", 10)
+            results = storage.recall(arguments["query"], top_k=top_k)
+            if not results:
+                result = [TextContent(type="text", text="No memories found.")]
+            else:
+                lines = [f"Found {len(results)} result(s):"]
+                for r in results:
+                    lines.append(f"  {r['id']}: {r['content'][:80]}...")
                 result = [TextContent(type="text", text="\n".join(lines))]
 
         else:

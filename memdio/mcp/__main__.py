@@ -93,6 +93,18 @@ TOOLS = [
             "required": ["tag"],
         },
     },
+    {
+        "name": "recall",
+        "description": "Query-routed hybrid retrieval — the best-performing recall pipeline. No LLM needed.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Natural language query to recall memories for"},
+                "top_k": {"type": "integer", "description": "Number of results (default 10)"},
+            },
+            "required": ["query"],
+        },
+    },
 ]
 
 _storage = None
@@ -173,6 +185,16 @@ def handle_tool_call(name, arguments):
             lines = [f"Found {len(results)} memory(s) tagged '{arguments['tag']}':"]
             for r in results:
                 lines.append(f"  {r['id']}: {r['content'][:80]}... [tags: {r.get('tags', '')}]")
+            return "\n".join(lines), False
+
+        elif name == "recall":
+            top_k = arguments.get("top_k", 10)
+            results = storage.recall(arguments["query"], top_k=top_k)
+            if not results:
+                return "No memories found.", False
+            lines = [f"Found {len(results)} result(s):"]
+            for r in results:
+                lines.append(f"  {r['id']}: {r['content'][:80]}...")
             return "\n".join(lines), False
 
         else:

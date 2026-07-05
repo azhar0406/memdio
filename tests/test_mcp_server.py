@@ -44,6 +44,13 @@ async def test_search():
 
 
 @pytest.mark.asyncio
+async def test_recall():
+    await call_tool("store_memory", {"content": "the quarterly budget review is on Friday"})
+    result = await call_tool("recall", {"query": "when is the budget review"})
+    assert "budget review" in result[0].text
+
+
+@pytest.mark.asyncio
 async def test_list():
     await call_tool("store_memory", {"content": "list test"})
     result = await call_tool("list_memories", {})

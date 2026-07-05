@@ -47,6 +47,23 @@ def test_search_command_finds_content():
     assert "penguins" in result.stdout
 
 
+def test_recall_command_returns_stored_content(mock_storage):
+    mock_storage.store("remember the blue notebook on the shelf")
+    result = runner.invoke(app, ["recall", "blue notebook"])
+    assert result.exit_code == 0
+    assert "Found 1 memory(s):" in result.stdout
+    assert "blue notebook" in result.stdout
+
+
+def test_remember_no_extract_stores_retrievable_memory(mock_storage):
+    result = runner.invoke(app, ["remember", "offline remember command text", "--no-extract"])
+    assert result.exit_code == 0
+    assert "Memory stored with ID:" in result.stdout
+
+    mem_id = result.stdout.split("Memory stored with ID:")[1].strip().splitlines()[0]
+    assert mock_storage.retrieve(mem_id) == "offline remember command text"
+
+
 def test_list_command_shows_stored_memory():
     _encode("first note")
     result = runner.invoke(app, ["list"])

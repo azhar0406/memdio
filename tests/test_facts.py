@@ -1,7 +1,5 @@
 """Tests for the productised memory-intelligence layer (facts + remember/recall)."""
 
-import pytest
-
 from memdio.core.facts import classify_query, extract_facts
 
 
