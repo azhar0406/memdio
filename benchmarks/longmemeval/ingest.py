@@ -65,10 +65,10 @@ def ingest_question(
 
     for date, text, facts in per_session:
         if text.strip():
-            storage.store(text, document_date=date, detect=False)
+            storage.store(text, tags="session", document_date=date, detect=False)
         for fact in facts:
             content = f"[{date}] {fact}" if date else fact
-            storage.store(content, document_date=date, detect=False)
+            storage.store(content, tags="fact", document_date=date, detect=False)
 
     return storage, db_dir
 
