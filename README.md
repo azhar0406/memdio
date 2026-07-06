@@ -126,36 +126,56 @@ API keys are stored as SHA-256 hashes in the configured `MEMDIO_KEYS_FILE`; raw 
 
 Evaluated on [LongMemEval](https://github.com/xiaowu0162/LongMemEval) — 500 questions across 6 task types.
 
-### Hybrid fact-extraction (v2) — gpt-4o
+### V2 stack — category-routed reading + exhaustive retrieval (gpt-4o, official judge)
 
-memdio's memory layer can store two representations of every conversation on top of the
+On top of the hybrid fact-extraction layer (below), the V2 stack adds four flag-gated
+techniques, each traced to a specific failure mode:
+
+- **Category-routed answer prompts** (`MEMDIO_PROMPT_V2=1`) — lexical question
+  classification routes preference / aggregation / temporal questions to specialized
+  chain-of-note prompts; detail questions keep the plain prompt.
+- **Exhaustive entity scan** (`MEMDIO_EXHAUSTIVE=1`) — aggregation/ordering questions
+  fail when a single instance is missed; keyword FTS (with singular/plural variants —
+  FTS5 doesn't stem) + a semantic raw-session top-up union every candidate instance,
+  interleaved so neither channel starves the other.
+- **Multi-window evidence extraction** (`MEMDIO_MULTIWINDOW=1`) — long sessions get up
+  to 3 windows around distinct keyword clusters instead of 1 (a single window silently
+  drops the second purchase mentioned later in the same session).
+- **LLM query expansion** (`MEMDIO_QUERYEXPAND=1`) — category questions ("food delivery
+  services") can't lexically reach their instances ("Domino's"); a cheap LLM call
+  expands the query with likely instance terms before the scan.
+
+Protocol: gpt-4o answerer, **gpt-4o judge** (official LongMemEval judge prompts, ported
+from the reference repo), `google/gemini-2.5-flash` extractor, stratified n=48
+(8 per task type).
+
+| Task Type | baseline | V2.2 (seed 42) | V2.2 (seed 123, unseen) |
+|-----------|---------|----------------|--------------------------|
+| Single-session (user) | 100.0% | 100.0% | 87.5% |
+| Single-session (assistant) | 100.0% | 100.0% | 100.0% |
+| Single-session (preference) | 50.0% | 62.5% | 62.5% |
+| Knowledge update | 75.0% | 87.5% | 87.5% |
+| Multi-session | 50.0% | 87.5% | 50.0% |
+| Temporal reasoning | 87.5% | 75.0% | 75.0% |
+| **Overall** | **77.1%** | **85.4%** | **77.1%** |
+
+**Honest read:** the seed-42 set was used to develop the fixes, so 85.4% (Supermemory's
+published number) is the tuned-set figure; the untouched seed-123 set gives 77.1%. The
+true score is likely in between — clearly above the Zep (71%) / mem0 (~67%, LOCOMO)
+tier; parity with Supermemory (85.4%, full-500) is **not yet claimed**. A full n=500 run
+under the same protocol is the next validation step. For calibration, earlier runs
+judged by `gemini-2.5-flash` scored ~4pp lower than the official gpt-4o judge on
+identical answers.
+
+### Hybrid fact-extraction — the memory layer under V2
+
+memdio's memory layer stores two representations of every conversation on top of the
 same audio storage: the **raw session** (episodic) and **LLM-extracted atomic facts**
-(semantic). Retrieval surfaces raw sessions for detail questions and discrete facts for
-aggregation/temporal questions. Enable with `MEMDIO_EXTRACT=1`.
-
-A **query router** (`MEMDIO_ROUTE=1`) sends counting/aggregation and temporal questions
-to fact-focused retrieval (discrete facts are countable and carry clean dates) while
-detail questions use the full raw+fact hybrid.
-
-Config: gpt-4o answerer, `google/gemini-2.5-flash` extractor + judge, Top-K 20, 4,000
-chars/memory, **stratified n=48** (8 per task type, seed 42).
-
-| Task Type | hybrid | hybrid + routing |
-|-----------|--------|------------------|
-| Single-session (user) | 100.0% | 100.0% |
-| Single-session (assistant) | 100.0% | 100.0% |
-| Single-session (preference) | 37.5% | 50.0% |
-| Knowledge update | 87.5% | 75.0% |
-| Multi-session | 25.0% | 50.0% |
-| Temporal reasoning | 62.5% | 62.5% |
-| **Overall** | **68.8%** | **72.9%** |
-
-For context, published LongMemEval-class results: **mem0 ~67%** (LOCOMO), **Zep 71%**
-(LongMemEval, gpt-4o), **Supermemory 85.4%** (LongMemEval-S). Numbers are not perfectly
-comparable (different judges/subsets/benchmarks), but on the same benchmark and answer
-model memdio's hybrid + routing (**72.9%**) exceeds the mem0/Zep tier — up from ~50% for
-plain vector retrieval. Multi-session aggregation ("how many / total …") remains the
-hardest category and the largest remaining headroom toward Supermemory's 85%.
+(semantic), enabled with `MEMDIO_EXTRACT=1`. A **query router** (`MEMDIO_ROUTE=1`)
+sends counting/aggregation and temporal questions to fact-focused retrieval while
+detail questions use the full raw+fact hybrid. This layer alone scored 72.9%
+(gemini judge; ≈77.1% under the official gpt-4o judge), up from ~50% for plain vector
+retrieval.
 
 ### Overall Results (v1, raw-vector retrieval)
 

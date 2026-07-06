@@ -2,6 +2,7 @@
 
 import os
 import re
+from itertools import zip_longest
 
 from benchmarks.config import MAX_MEMORY_CHARS, SEARCH_TOP_K
 from memdio.core.rerank import cross_encoder_rerank, reciprocal_rank_fusion
@@ -42,8 +43,76 @@ def classify_query(query: str) -> str:
     return "detail"
 
 
-def hybrid_search(storage: StorageManager, query: str, top_k: int = SEARCH_TOP_K) -> list[dict]:
-    """Combine FTS5 + semantic + temporal + relation expansion."""
+# Ordering questions ("which did I do first/last") need every instance of the
+# entity, like aggregation — but don't match the aggregation/temporal patterns.
+_ORDER_PATTERNS = re.compile(
+    r'\bfirst\b|\blast\b|\bearliest\b|\blatest\b|\bmost recent(?:ly)?\b|\bwhat order\b',
+    re.IGNORECASE,
+)
+
+# Function/question words that carry no entity signal for a keyword scan.
+_STOPWORDS = frozenset("""
+    what when where which whose whom while would could should shall might must
+    this that these those there their theirs them then than they have has had
+    having been being because before after during between both each some such
+    about above below again against into just more most only other over same
+    from with your yours mine ours does did doing will time times total number
+    many much often mention mentioned mentioning tell told user assistant
+    question answer past months month weeks week years year days recently
+""".split())
+
+
+def _needs_exhaustive(query: str) -> bool:
+    """Aggregation and ordering questions fail whenever a single instance of the
+    target entity is missed, so top-k retrieval isn't enough for them."""
+    cls = classify_query(query)
+    return cls in ("aggregation", "temporal") or bool(_ORDER_PATTERNS.search(query))
+
+
+def _content_keywords(query: str, max_keywords: int = 8) -> list[str]:
+    """Entity-bearing keywords from the query (stopword-filtered, deduped)."""
+    words = re.findall(r"[a-z']+", query.lower())
+    seen = set()
+    keywords = []
+    for w in words:
+        if len(w) > 3 and w not in _STOPWORDS and w not in seen:
+            seen.add(w)
+            keywords.append(w)
+            if len(keywords) >= max_keywords:
+                break
+    return keywords
+
+
+def _keyword_variants(kw: str) -> list[str]:
+    """Singular/plural forms — the FTS5 table uses the default tokenizer (no
+    stemming), so 'kits' never matches 'kit'. Search both forms."""
+    variants = [kw]
+    if kw.endswith("ies") and len(kw) > 4:
+        variants.append(kw[:-3] + "y")   # hobbies -> hobby
+    elif kw.endswith("es") and len(kw) > 4:
+        variants.append(kw[:-2])          # dishes -> dish
+        variants.append(kw[:-1])          # recipes -> recipe
+    elif kw.endswith("s") and not kw.endswith("ss"):
+        variants.append(kw[:-1])          # kits -> kit
+    elif kw.endswith("y") and len(kw) > 4:
+        variants.append(kw[:-1] + "ies")  # hobby -> hobbies
+    else:
+        variants.append(kw + "s")         # kit -> kits
+    return variants
+
+
+def hybrid_search(
+    storage: StorageManager,
+    query: str,
+    top_k: int = SEARCH_TOP_K,
+    extra_terms: list[str] | None = None,
+) -> list[dict]:
+    """Combine FTS5 + semantic + temporal + relation expansion.
+
+    ``extra_terms`` are additional search terms (e.g. LLM-expanded instance
+    names like "Domino's", "Uber Eats" for "food delivery services") used by
+    the exhaustive scan.
+    """
     rerank_mode = os.getenv("MEMDIO_RERANK", "1")
 
     # Route aggregation/temporal queries through the SAME pipeline but restricted to
@@ -148,11 +217,79 @@ def hybrid_search(storage: StorageManager, query: str, top_k: int = SEARCH_TOP_K
     if rerank_mode == "cross":
         return cross_encoder_rerank(query, ranked, top_n=top_k)
 
+    # Exhaustive entity scan — aggregation/ordering questions fail whenever a
+    # single instance is missed, and incidental instances are often never
+    # extracted as facts. Union in every FTS keyword hit: facts first, then the
+    # raw sessions that contain the missed instances (memory-as-index,
+    # chunk-as-payload). Flag-gated for A/B.
+    if os.getenv("MEMDIO_EXHAUSTIVE") == "1" and _needs_exhaustive(query):
+        max_items = int(os.getenv("MEMDIO_EXHAUSTIVE_MAX", "80"))
+        max_raw = int(os.getenv("MEMDIO_EXHAUSTIVE_RAW", "20"))
+        seen = {m["id"] for m in ranked}
+        extra_facts, extra_raw_sem, extra_raw_kw = [], [], []
+
+        # Semantic raw-session top-up — brand/entity instances ("JetBlue") are
+        # not derivable from the query's keywords ("airlines", "flew"), so a
+        # keyword scan alone misses them. Pull back the semantically closest
+        # raw sessions beyond what the main retrieval kept.
+        try:
+            for r in storage.semantic_search(query, top_k=max(fetch_k, top_k * 3)):
+                if r["id"] in seen or (r.get("tags") or "") == "fact":
+                    continue
+                seen.add(r["id"])
+                extra_raw_sem.append(r)
+        except Exception:
+            pass
+
+        # Keyword scan over query keywords plus any LLM-expanded instance
+        # terms (category questions like "food delivery services" need the
+        # instances — "Domino's", "Uber Eats" — which share no surface form
+        # with the category).
+        scan_terms = []
+        for kw in _content_keywords(query):
+            scan_terms.extend(_keyword_variants(kw))
+        for term in extra_terms or []:
+            term = term.strip().lower()
+            if term and term not in scan_terms:
+                scan_terms.append(term)
+        for term in scan_terms:
+            try:
+                hits = storage.search(term)
+            except Exception:
+                continue
+            for r in hits:
+                if r["id"] in seen:
+                    continue
+                seen.add(r["id"])
+                if (r.get("tags") or "") == "fact":
+                    extra_facts.append(r)
+                else:
+                    extra_raw_kw.append(r)
+        ranked.extend(extra_facts)
+        # Interleave keyword and semantic raw hits — either channel alone can
+        # flood the raw budget and starve the other (semantic finds "JetBlue",
+        # keyword finds the low-similarity session with the coin acquisition).
+        interleaved = []
+        for pair in zip_longest(extra_raw_kw, extra_raw_sem):
+            for r in pair:
+                if r is not None:
+                    interleaved.append(r)
+        ranked.extend(interleaved[:max_raw])
+        return ranked[:max_items]
+
     return ranked[:top_k + 5]  # allow a few extra from relations
 
 
+_TURN_PATTERN = re.compile(r'\n(?:user|assistant):', re.IGNORECASE)
+
+
 def _extract_relevant_window(content: str, query: str, max_chars: int) -> str:
-    """Extract the most relevant window of text around query keyword matches."""
+    """Extract the most relevant window(s) of text around query keyword matches.
+
+    With MEMDIO_MULTIWINDOW=1, up to three windows around distinct keyword
+    clusters are returned — a single window silently drops co-located evidence
+    (e.g. the second feed purchase later in the same session).
+    """
     if len(content) <= max_chars:
         return content
 
@@ -170,13 +307,42 @@ def _extract_relevant_window(content: str, query: str, max_chars: int) -> str:
         return content[:half] + "\n...\n" + content[-half:]
 
     positions.sort()
+
+    if os.getenv("MEMDIO_MULTIWINDOW") == "1":
+        # Cluster keyword hits; a gap larger than half the budget starts a new
+        # cluster. One window per cluster (up to 3), sharing the char budget.
+        clusters = [[positions[0]]]
+        for p in positions[1:]:
+            if p - clusters[-1][-1] > max_chars // 2:
+                clusters.append([p])
+            else:
+                clusters[-1].append(p)
+        clusters = clusters[:3]
+        win = max_chars // len(clusters)
+        snippets = []
+        prev_end = 0
+        for cl in clusters:
+            center = cl[len(cl) // 2]
+            end = min(len(content), max(prev_end, center - win // 2) + win)
+            start = max(prev_end, end - win)
+            m = list(_TURN_PATTERN.finditer(content[:start]))
+            if m and m[-1].start() + 1 > prev_end:
+                start = m[-1].start() + 1
+            if start >= end:
+                continue
+            snippets.append(content[start:end])
+            prev_end = end
+        prefix = "..." if snippets and not content.startswith(snippets[0]) else ""
+        suffix = "..." if prev_end < len(content) else ""
+        joined = "\n...\n".join(snippets)
+        return f"{prefix}{joined}{suffix}"
+
     best_start = max(0, positions[len(positions) // 2] - max_chars // 2)
     best_end = min(len(content), best_start + max_chars)
     best_start = max(0, best_end - max_chars)
 
-    turn_pattern = re.compile(r'\n(?:user|assistant):', re.IGNORECASE)
     before = content[:best_start]
-    m = list(turn_pattern.finditer(before))
+    m = list(_TURN_PATTERN.finditer(before))
     if m:
         best_start = m[-1].start() + 1
 
@@ -190,6 +356,15 @@ def format_context(results: list[dict], query: str = "") -> str:
     """Format search results into a context string for LLM."""
     if not results:
         return "No relevant memories found."
+
+    # Chronological evidence ordering for aggregation/ordering questions — the
+    # LongMemEval paper always sorts retrieved evidence by timestamp, which
+    # makes ordering/supersession reasoning much easier for the reader.
+    if os.getenv("MEMDIO_EXHAUSTIVE") == "1" and query and _needs_exhaustive(query):
+        results = sorted(
+            results,
+            key=lambda r: r.get("document_date") or r.get("event_date") or r.get("created_at") or "9999",
+        )
 
     parts = []
     for i, r in enumerate(results, 1):

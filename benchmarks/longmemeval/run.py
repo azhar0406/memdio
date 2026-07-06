@@ -28,13 +28,13 @@ from benchmarks.config import (
     OPENAI_ANSWER_MODELS,
     OPENAI_JUDGE_MODEL,
 )
-from benchmarks.longmemeval.answer import distill_context, generate_answer, get_client
+from benchmarks.longmemeval.answer import distill_context, expand_query, generate_answer, get_client
 from benchmarks.longmemeval.download import load_dataset
 from benchmarks.longmemeval.evaluate import evaluate_single, get_judge_client
 from benchmarks.longmemeval.extract import extract_facts, extract_model, extraction_enabled
 from benchmarks.longmemeval.ingest import cleanup_question_db, ingest_question
 from benchmarks.longmemeval.report import print_report, save_results
-from benchmarks.longmemeval.search import format_context, hybrid_search
+from benchmarks.longmemeval.search import _needs_exhaustive, format_context, hybrid_search
 
 
 def save_checkpoint(run_id: str, model: str, completed: dict, results: list[dict]):
@@ -87,7 +87,18 @@ def process_question(
         }
 
     try:
-        search_results = hybrid_search(storage, question["question"])
+        # LLM query expansion for exhaustive queries — category questions need
+        # instance terms ("Domino's") that share no surface form with the
+        # category ("food delivery services").
+        extra_terms = None
+        if os.getenv("MEMDIO_QUERYEXPAND") == "1" and _needs_exhaustive(question["question"]):
+            default_expand = "gpt-4o-mini" if provider == "openai" else "google/gemini-2.5-flash"
+            expand_model = os.getenv("MEMDIO_EXPAND_MODEL", default_expand)
+            extra_terms = expand_query(
+                answer_client, expand_model, question["question"], provider=provider
+            )
+
+        search_results = hybrid_search(storage, question["question"], extra_terms=extra_terms)
         context = format_context(search_results, query=question["question"])
 
         if os.getenv("MEMDIO_DISTILL") == "1":

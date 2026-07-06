@@ -1,4 +1,4 @@
-"""Evaluate answers using GPT-4o judge — matches LongMemEval protocol.
+"""Evaluate answers using an LLM judge — matches LongMemEval protocol.
 
 Ported from: https://github.com/xiaowu0162/LongMemEval/blob/main/src/evaluation/evaluate_qa.py
 Uses task-specific prompts for each of the 6 question types.
@@ -8,7 +8,13 @@ import time
 
 from openai import OpenAI
 
-from benchmarks.config import JUDGE_MODEL, OPENROUTER_API_KEY, OPENROUTER_BASE_URL
+from benchmarks.config import (
+    JUDGE_MODEL,
+    OPENAI_API_KEY,
+    OPENAI_BASE_URL,
+    OPENROUTER_API_KEY,
+    OPENROUTER_BASE_URL,
+)
 
 # ---------- Task-specific evaluation prompts (from LongMemEval) ----------
 
@@ -65,8 +71,18 @@ Response: {hypothesis}
 Does the response correctly indicate that it cannot answer or doesn't have the information? Answer with only "yes" or "no"."""
 
 
-def get_judge_client() -> OpenAI:
-    """Create OpenRouter client for judging."""
+def get_judge_client(provider: str = "openrouter") -> OpenAI:
+    """Create client for judging."""
+    if provider == "openai":
+        if not OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY not set. Add it to .env file or environment.")
+        kwargs = {"api_key": OPENAI_API_KEY}
+        if OPENAI_BASE_URL:
+            kwargs["base_url"] = OPENAI_BASE_URL
+        return OpenAI(**kwargs)
+
+    if provider != "openrouter":
+        raise ValueError(f"Unsupported provider: {provider}")
     if not OPENROUTER_API_KEY:
         raise ValueError("OPENROUTER_API_KEY not set. Add it to .env file.")
     return OpenAI(
@@ -82,6 +98,8 @@ def evaluate_single(
     question: str,
     reference_answer: str,
     hypothesis: str,
+    provider: str = "openrouter",
+    judge_model: str = JUDGE_MODEL,
     max_retries: int = 3,
 ) -> dict:
     """Evaluate a single answer against reference. Returns dict with label."""
@@ -103,13 +121,21 @@ def evaluate_single(
 
     for attempt in range(max_retries):
         try:
-            response = client.chat.completions.create(
-                model=JUDGE_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-                max_tokens=10,
-            )
-            raw = response.choices[0].message.content.strip().lower()
+            if provider == "openai":
+                response = client.responses.create(
+                    model=judge_model,
+                    input=prompt,
+                    max_output_tokens=10,
+                )
+                raw = response.output_text.strip().lower()
+            else:
+                response = client.chat.completions.create(
+                    model=judge_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                    max_tokens=10,
+                )
+                raw = response.choices[0].message.content.strip().lower()
             label = raw.startswith("yes")
             return {
                 "question_id": question_id,

@@ -23,14 +23,14 @@ def print_report(results: list[dict], model: str = ""):
         if r.get("is_abstention"):
             abstention.append(r["label"])
 
-    header = f"LongMemEval Results"
+    header = "LongMemEval Results"
     if model:
         header += f" — {model}"
     print(f"\n{'=' * 60}")
     print(header)
     print(f"{'=' * 60}")
 
-    print(f"\nResults by task:")
+    print("\nResults by task:")
     task_accs = []
     for task_type in [
         "single-session-user",
