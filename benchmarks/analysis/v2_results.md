@@ -25,6 +25,31 @@ inputs: `failure_analysis_66422f77.md`, `sota_research.md`.
 | **V2.2** | + query expansion + preference prompt v3 | gpt-4o | **85.4%** (41/48) | 054e74e9 |
 | V2.2 seed 123 | same config, unseen questions | gpt-4o | **77.1%** | 22940205 |
 | V2.3 | + interleaved raw channels + 12-term expansion | gpt-4o | **85.4%** (41/48, zero flips vs V2.2) | b26ec687 |
+| **FULL n=500** | V2.3 config, complete set (2026-07-08) | gpt-4o | **74.4%** (task-avg 74.8%, abstention 80.0%) | full500 |
+
+## Full n=500 — the official number (2026-07-08)
+
+Run on the dedicated Mac mini benchmark server, resumable checkpointing (survived one
+OOM reboot and one OpenRouter credit exhaustion — 40 poisoned 402 results were scrubbed
+from the checkpoint and re-run; final data has zero API errors).
+
+| Type | n | Accuracy |
+|---|---|---|
+| single-session-user | 70 | 92.9% |
+| single-session-assistant | 56 | 85.7% |
+| knowledge-update | 78 | 83.3% |
+| temporal-reasoning | 133 | 74.4% |
+| multi-session | 133 | 59.4% |
+| single-session-preference | 30 | 53.3% |
+
+The seed-split methodology was vindicated: seed-42 (tuned) said 85.4%, seed-123
+(held-out) said 77.1%, and the full set settled at 74.4%. The full set is also
+harder than either n=48 sample because multi-session and temporal — our two weakest
+types — are 133/500 questions each (53% of the set combined vs 33% in the stratified
+samples). Positioning: above Zep (71.2%), below Supermemory (85.4%, self-reported).
+Next levers, in expected-value order: multi-session extraction (59.4% over 133 Qs —
+`v3_extraction_design.md`, review-PASSed), preference profile store (53.3% over 30 Qs),
+temporal event-date resolution (74.4% over 133 Qs).
 
 ## Per-type (V2.2)
 
