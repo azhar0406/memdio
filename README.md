@@ -126,6 +126,30 @@ API keys are stored as SHA-256 hashes in the configured `MEMDIO_KEYS_FILE`; raw 
 
 Evaluated on [LongMemEval](https://github.com/xiaowu0162/LongMemEval) — 500 questions across 6 task types.
 
+### Official result — full n=500, official protocol
+
+**74.4% overall** (task-averaged 74.8%) on the complete LongMemEval-S set, run 2026-07-08
+with the official protocol: gpt-4o answerer, gpt-4o judge with the reference judge
+prompts, all V2 flags enabled.
+
+| Task Type | n | Accuracy |
+|-----------|---|----------|
+| Single-session (user) | 70 | 92.9% |
+| Single-session (assistant) | 56 | 85.7% |
+| Knowledge update | 78 | 83.3% |
+| Temporal reasoning | 133 | 74.4% |
+| Multi-session | 133 | 59.4% |
+| Single-session (preference) | 30 | 53.3% |
+| **Overall** | **500** | **74.4%** |
+| Abstention accuracy | 30 | 80.0% |
+
+For context against self-reported full-500 numbers: Zep 71.2%, Supermemory 85.4%.
+memdio sits clearly above the Zep tier while storing every memory as FLAC-encoded
+audio. The two frontier gaps are explicit and data-backed: multi-session aggregation
+(59.4% — fact extraction misses incidental instances at ingest) and preference
+questions (53.3% — no preference profile store yet). Both have designed fixes queued
+(see `benchmarks/analysis/`).
+
 ### V2 stack — category-routed reading + exhaustive retrieval (gpt-4o, official judge)
 
 On top of the hybrid fact-extraction layer (below), the V2 stack adds four flag-gated
@@ -159,13 +183,12 @@ from the reference repo), `google/gemini-2.5-flash` extractor, stratified n=48
 | Temporal reasoning | 87.5% | 75.0% | 75.0% |
 | **Overall** | **77.1%** | **85.4%** | **77.1%** |
 
-**Honest read:** the seed-42 set was used to develop the fixes, so 85.4% (Supermemory's
-published number) is the tuned-set figure; the untouched seed-123 set gives 77.1%. The
-true score is likely in between — clearly above the Zep (71%) / mem0 (~67%, LOCOMO)
-tier; parity with Supermemory (85.4%, full-500) is **not yet claimed**. A full n=500 run
-under the same protocol is the next validation step. For calibration, earlier runs
-judged by `gemini-2.5-flash` scored ~4pp lower than the official gpt-4o judge on
-identical answers.
+**Honest read:** the seed-42 set was used to develop the fixes, so 85.4% is the
+tuned-set figure; the untouched seed-123 set gave 77.1%, and the full n=500 run above
+settled it at **74.4%** — the development-set numbers overstated the gains exactly as
+the held-out split warned. The full-500 figure is the only one we quote externally.
+For calibration, earlier runs judged by `gemini-2.5-flash` scored ~4pp lower than the
+official gpt-4o judge on identical answers.
 
 ### Hybrid fact-extraction — the memory layer under V2
 
