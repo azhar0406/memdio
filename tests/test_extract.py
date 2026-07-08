@@ -97,3 +97,66 @@ def test_extract_model_reads_env_with_default(monkeypatch):
 
     monkeypatch.setenv("MEMDIO_EXTRACT_MODEL", "custom/model")
     assert extract.extract_model() == "custom/model"
+
+
+def test_extract_facts_uses_v3_prompt_when_flag_set(monkeypatch):
+    """When MEMDIO_EXTRACT_V3=1, extract_facts uses EXTRACT_PROMPT_V3."""
+    monkeypatch.setenv("MEMDIO_EXTRACT_V3", "1")
+    monkeypatch.delenv("MEMDIO_EXTRACT", raising=False)
+
+    captured_prompt = []
+
+    def fake_create(**kwargs):
+        content = kwargs["messages"][0]["content"]
+        captured_prompt.append(content)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(message=SimpleNamespace(content="NONE"))
+            ]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+    )
+
+    extract.extract_facts(
+        client=client,
+        model="fake-model",
+        session_text="test session",
+        session_date="2026-07-08",
+    )
+
+    assert len(captured_prompt) == 1
+    assert "side comment" in captured_prompt[0]
+    assert "category-bearing" in captured_prompt[0]
+
+
+def test_extract_facts_uses_baseline_prompt_when_flag_unset(monkeypatch):
+    """When MEMDIO_EXTRACT_V3 is not 1, extract_facts uses the baseline prompt."""
+    monkeypatch.delenv("MEMDIO_EXTRACT_V3", raising=False)
+
+    captured_prompt = []
+
+    def fake_create(**kwargs):
+        content = kwargs["messages"][0]["content"]
+        captured_prompt.append(content)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(message=SimpleNamespace(content="NONE"))
+            ]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+    )
+
+    extract.extract_facts(
+        client=client,
+        model="fake-model",
+        session_text="test session",
+        session_date="2026-07-08",
+    )
+
+    assert len(captured_prompt) == 1
+    assert "side comment" not in captured_prompt[0]
+    assert "category-bearing" not in captured_prompt[0]
