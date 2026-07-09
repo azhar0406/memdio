@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from benchmarks.longmemeval import extract
+from benchmarks.longmemeval.ingest import cleanup_question_db, ingest_question
 
 
 def test_parse_facts_strips_prefixes_and_drops_none():
@@ -220,14 +221,71 @@ def test_extract_facts_eventdate_prompt_takes_precedence_over_extract_v3(monkeyp
     assert "side comment" in captured_prompt[0]
 
 
-def test_parse_facts_keeps_eventdate_prefixes_intact():
+def test_parse_fact_records_splits_eventdate_prefixes():
     text = """
     event_date=2026-07-01 | The user visited the Science Museum.
     event_date=UNKNOWN | The user planned another museum visit.
     NONE
     """
 
-    assert extract._parse_facts(text) == [
-        "event_date=2026-07-01 | The user visited the Science Museum.",
-        "event_date=UNKNOWN | The user planned another museum visit.",
+    assert extract._parse_fact_records(text) == [
+        ("The user visited the Science Museum.", "2026-07-01"),
+        ("The user planned another museum visit.", None),
     ]
+
+
+def test_extract_facts_strips_eventdate_prefixes_from_returned_strings(monkeypatch):
+    monkeypatch.setenv("MEMDIO_EVENTDATE_V3", "1")
+
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=(
+                        "event_date=2026-07-01 | The user visited the Science Museum.\n"
+                        "event_date=UNKNOWN | The user planned another museum visit.\n"
+                    )
+                )
+            )
+        ]
+    )
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **_kwargs: response))
+    )
+
+    facts = extract.extract_facts(
+        client=client,
+        model="fake-model",
+        session_text="session",
+        session_date="2026-07-08",
+    )
+
+    assert facts == [
+        "The user visited the Science Museum.",
+        "The user planned another museum visit.",
+    ]
+
+
+def test_ingest_question_stores_clean_fact_text_with_event_date():
+    question = {
+        "question_id": "q_temporal",
+        "haystack_sessions": [[{"role": "user", "content": "I went to the museum last Tuesday."}]],
+        "haystack_dates": ["2026/07/08 (Wed) 10:00"],
+    }
+
+    def extractor(_text, _date):
+        return [
+            ("The user visited the Science Museum.", "2026-07-01"),
+            ("The user planned another museum visit.", None),
+        ]
+
+    storage, db_dir = ingest_question(question, extractor=extractor)
+    try:
+        results = storage.search("Science")
+        assert len(results) == 1
+        assert results[0]["content"] == "[2026/07/08 (Wed) 10:00] The user visited the Science Museum."
+        assert results[0]["document_date"] == "2026/07/08 (Wed) 10:00"
+        assert results[0]["event_date"] == "2026-07-01"
+    finally:
+        storage.close()
+        cleanup_question_db(db_dir)

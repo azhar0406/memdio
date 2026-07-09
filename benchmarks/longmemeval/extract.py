@@ -5,9 +5,14 @@ and counting discrete facts instead of re-reading raw session dumps.
 """
 
 import os
+import re
 import time
 
 from openai import OpenAI
+
+_EVENTDATE_PREFIX_RE = re.compile(
+    r"^event_date=(?P<event_date>\d{4}-\d{2}-\d{2}|UNKNOWN)\s*\|\s*(?P<fact>.+)$"
+)
 
 EXTRACT_PROMPT = """Extract atomic FACTS about the USER from the conversation below.
 
@@ -92,6 +97,60 @@ Conversation:
 Facts (one per line):"""
 
 
+def _select_prompt_template() -> str:
+    if os.getenv("MEMDIO_EVENTDATE_V3") == "1":
+        return EXTRACT_PROMPT_EVENTDATE_V3
+    if os.getenv("MEMDIO_EXTRACT_V3") == "1":
+        return EXTRACT_PROMPT_V3
+    return EXTRACT_PROMPT
+
+
+def _build_prompt(session_text: str, session_date: str = "") -> str:
+    return _select_prompt_template().format(date=session_date or "unknown", session=session_text)
+
+
+def _run_extract_completion(
+    client: OpenAI,
+    model: str,
+    prompt: str,
+    provider: str = "openrouter",
+    max_retries: int = 3,
+) -> str:
+    for attempt in range(max_retries):
+        try:
+            if provider == "openai":
+                resp = client.responses.create(model=model, input=prompt, max_output_tokens=700)
+                return resp.output_text
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=700,
+            )
+            return resp.choices[0].message.content
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(2 ** (attempt + 1))
+            else:
+                print(f"  extract failed: {e}")
+                return ""
+    return ""
+
+
+def extract_fact_records(
+    client: OpenAI,
+    model: str,
+    session_text: str,
+    session_date: str = "",
+    provider: str = "openrouter",
+    max_retries: int = 3,
+) -> list[tuple[str, str | None]]:
+    """Extract fact records as (clean_text, event_date)."""
+    prompt = _build_prompt(session_text, session_date)
+    text = _run_extract_completion(client, model, prompt, provider=provider, max_retries=max_retries)
+    return _parse_fact_records(text)
+
+
 def extract_facts(
     client: OpenAI,
     model: str,
@@ -101,34 +160,19 @@ def extract_facts(
     max_retries: int = 3,
 ) -> list[str]:
     """Extract a list of atomic user facts from one session. Empty list on failure."""
-    if os.getenv("MEMDIO_EVENTDATE_V3") == "1":
-        prompt_template = EXTRACT_PROMPT_EVENTDATE_V3
-    elif os.getenv("MEMDIO_EXTRACT_V3") == "1":
-        prompt_template = EXTRACT_PROMPT_V3
-    else:
-        prompt_template = EXTRACT_PROMPT
-    prompt = prompt_template.format(date=session_date or "unknown", session=session_text)
-    for attempt in range(max_retries):
-        try:
-            if provider == "openai":
-                resp = client.responses.create(model=model, input=prompt, max_output_tokens=700)
-                text = resp.output_text
-            else:
-                resp = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0,
-                    max_tokens=700,
-                )
-                text = resp.choices[0].message.content
-            return _parse_facts(text)
-        except Exception as e:
-            if attempt < max_retries - 1:
-                time.sleep(2 ** (attempt + 1))
-            else:
-                print(f"  extract failed: {e}")
-                return []
-    return []
+    records = extract_fact_records(
+        client,
+        model,
+        session_text,
+        session_date,
+        provider=provider,
+        max_retries=max_retries,
+    )
+    return [fact for fact, _event_date in records]
+
+
+def _clean_fact_line(line: str) -> str:
+    return line.strip().lstrip("-*0123456789. ").strip()
 
 
 def _parse_facts(text: str) -> list[str]:
@@ -136,10 +180,27 @@ def _parse_facts(text: str) -> list[str]:
         return []
     facts = []
     for line in text.splitlines():
-        line = line.strip().lstrip("-*0123456789. ").strip()
+        line = _clean_fact_line(line)
         if not line or line.upper() == "NONE":
             continue
         facts.append(line)
+    return facts
+
+
+def _parse_fact_records(text: str) -> list[tuple[str, str | None]]:
+    if not text:
+        return []
+    facts = []
+    for line in text.splitlines():
+        line = _clean_fact_line(line)
+        if not line or line.upper() == "NONE":
+            continue
+        match = _EVENTDATE_PREFIX_RE.match(line)
+        if not match:
+            facts.append((line, None))
+            continue
+        event_date = match.group("event_date")
+        facts.append((match.group("fact").strip(), None if event_date == "UNKNOWN" else event_date))
     return facts
 
 

@@ -31,7 +31,12 @@ from benchmarks.config import (
 from benchmarks.longmemeval.answer import distill_context, expand_query, generate_answer, get_client
 from benchmarks.longmemeval.download import load_dataset
 from benchmarks.longmemeval.evaluate import evaluate_single, get_judge_client
-from benchmarks.longmemeval.extract import extract_facts, extract_model, extraction_enabled
+from benchmarks.longmemeval.extract import (
+    extract_fact_records,
+    extract_facts,
+    extract_model,
+    extraction_enabled,
+)
 from benchmarks.longmemeval.ingest import cleanup_question_db, ingest_question
 from benchmarks.longmemeval.report import print_report, save_results
 from benchmarks.longmemeval.search import _needs_exhaustive, format_context, hybrid_search
@@ -75,6 +80,8 @@ def process_question(
         if extraction_enabled():
             emodel = extract_model()
             def _extractor(text, date, _c=answer_client, _m=emodel, _p=provider):
+                if os.getenv("MEMDIO_EVENTDATE_V3") == "1":
+                    return extract_fact_records(_c, _m, text, date, provider=_p)
                 return extract_facts(_c, _m, text, date, provider=_p)
             storage, db_dir = ingest_question(question, extractor=_extractor)
         else:

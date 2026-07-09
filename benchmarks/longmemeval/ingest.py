@@ -25,9 +25,10 @@ def ingest_question(
 ) -> tuple[StorageManager, str]:
     """Ingest all haystack sessions for a single question into an isolated StorageManager.
 
-    If ``extractor`` (a callable ``(session_text, date) -> list[str]`` of atomic facts)
-    is provided, each session is distilled into discrete fact-memories instead of the
-    raw session dump. Extraction runs in parallel across sessions (LLM-bound).
+    If ``extractor`` is provided, each session is distilled into discrete fact-memories
+    instead of the raw session dump. The extractor may return plain fact strings or
+    ``(fact_text, event_date)`` tuples. Extraction runs in parallel across sessions
+    (LLM-bound).
 
     Returns (storage_manager, db_path) so caller can clean up.
     """
@@ -67,8 +68,18 @@ def ingest_question(
         if text.strip():
             storage.store(text, tags="session", document_date=date, detect=False)
         for fact in facts:
-            content = f"[{date}] {fact}" if date else fact
-            storage.store(content, tags="fact", document_date=date, detect=False)
+            if isinstance(fact, tuple):
+                fact_text, event_date = fact
+            else:
+                fact_text, event_date = fact, None
+            content = f"[{date}] {fact_text}" if date else fact_text
+            storage.store(
+                content,
+                tags="fact",
+                document_date=date,
+                event_date=event_date,
+                detect=False,
+            )
 
     return storage, db_dir
 
