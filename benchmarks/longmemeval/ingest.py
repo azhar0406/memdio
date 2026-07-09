@@ -8,6 +8,12 @@ from concurrent.futures import ThreadPoolExecutor
 from memdio.core.storage import StorageManager
 
 
+def _normalize_extracted_memories(extracted) -> tuple[list[str], list[str]]:
+    if hasattr(extracted, "facts") and hasattr(extracted, "preferences"):
+        return list(extracted.facts), list(extracted.preferences)
+    return list(extracted), []
+
+
 def format_session(session: list[dict], session_date: str | None = None) -> str:
     """Format a session's turns into a single text block for storage."""
     lines = []
@@ -58,17 +64,21 @@ def ingest_question(
         text = format_session(session, session_date=date)
         if not text.strip():
             return date, "", []
-        return date, text, extractor(text, date)
+        return date, text, _normalize_extracted_memories(extractor(text, date))
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         per_session = list(pool.map(_extract, enumerate(sessions)))
 
-    for date, text, facts in per_session:
+    for date, text, extracted in per_session:
+        facts, preferences = extracted
         if text.strip():
             storage.store(text, tags="session", document_date=date, detect=False)
         for fact in facts:
             content = f"[{date}] {fact}" if date else fact
             storage.store(content, tags="fact", document_date=date, detect=False)
+        for preference in preferences:
+            content = f"[{date}] {preference}" if date else preference
+            storage.store(content, tags="preference", document_date=date, detect=False)
 
     return storage, db_dir
 

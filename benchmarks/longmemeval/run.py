@@ -28,10 +28,17 @@ from benchmarks.config import (
     OPENAI_ANSWER_MODELS,
     OPENAI_JUDGE_MODEL,
 )
-from benchmarks.longmemeval.answer import distill_context, expand_query, generate_answer, get_client
+from benchmarks.longmemeval.answer import (
+    build_preference_profile,
+    classify_question,
+    distill_context,
+    expand_query,
+    generate_answer,
+    get_client,
+)
 from benchmarks.longmemeval.download import load_dataset
 from benchmarks.longmemeval.evaluate import evaluate_single, get_judge_client
-from benchmarks.longmemeval.extract import extract_facts, extract_model, extraction_enabled
+from benchmarks.longmemeval.extract import extract_facts, extract_model, extract_session_memories, extraction_enabled
 from benchmarks.longmemeval.ingest import cleanup_question_db, ingest_question
 from benchmarks.longmemeval.report import print_report, save_results
 from benchmarks.longmemeval.search import _needs_exhaustive, format_context, hybrid_search
@@ -75,6 +82,8 @@ def process_question(
         if extraction_enabled():
             emodel = extract_model()
             def _extractor(text, date, _c=answer_client, _m=emodel, _p=provider):
+                if os.getenv("MEMDIO_PREF_V3") == "1":
+                    return extract_session_memories(_c, _m, text, date, provider=_p)
                 return extract_facts(_c, _m, text, date, provider=_p)
             storage, db_dir = ingest_question(question, extractor=_extractor)
         else:
@@ -100,6 +109,16 @@ def process_question(
 
         search_results = hybrid_search(storage, question["question"], extra_terms=extra_terms)
         context = format_context(search_results, query=question["question"])
+        preference_profile = ""
+
+        if os.getenv("MEMDIO_PREF_V3") == "1" and classify_question(question["question"]) == "preference":
+            preference_memories = storage.recall(
+                question["question"],
+                top_k=10,
+                route=False,
+                tags="preference",
+            )
+            preference_profile = build_preference_profile(preference_memories)
 
         if os.getenv("MEMDIO_DISTILL") == "1":
             distill_model = os.getenv("MEMDIO_DISTILL_MODEL", "google/gemini-2.5-flash")
@@ -114,6 +133,7 @@ def process_question(
             answer_client, model,
             question["question"], context,
             question_date=question.get("question_date", ""),
+            preference_profile=preference_profile,
             provider=provider,
         )
 

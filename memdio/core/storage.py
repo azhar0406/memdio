@@ -718,7 +718,7 @@ class StorageManager:
         # Vector similarity search
         current_filter = "" if include_superseded else "AND m.is_current = 1"
         rows = self._conn.execute(
-            f"""SELECT m.id, m.content, m.created_at, v.distance, m.event_date, m.document_date
+            f"""SELECT m.id, m.content, m.created_at, m.tags, v.distance, m.event_date, m.document_date
                 FROM vector_full_scan('memories', 'embedding', ?, ?) v
                 JOIN memories m ON m.rowid = v.rowid
                 {current_filter}""",
@@ -727,8 +727,8 @@ class StorageManager:
 
         results = []
         for r in rows:
-            results.append({"id": r[0], "content": r[1], "created_at": r[2], "score": 1.0 - r[3],
-                            "event_date": r[4], "document_date": r[5]})
+            results.append({"id": r[0], "content": r[1], "created_at": r[2], "tags": r[3],
+                            "score": 1.0 - r[4], "event_date": r[5], "document_date": r[6]})
             if len(results) >= top_k:
                 break
 
@@ -751,7 +751,7 @@ class StorageManager:
                 self.store(fact, tags="fact", document_date=document_date, detect=False)
         return mem_id
 
-    def recall(self, query, top_k=10, route=True):
+    def recall(self, query, top_k=10, route=True, tags=None):
         """Query-routed hybrid retrieval (the 72.9%-on-LongMemEval strategy).
 
         Aggregation/temporal queries are answered from discrete facts; detail
@@ -762,10 +762,16 @@ class StorageManager:
         from memdio.core.rerank import reciprocal_rank_fusion
 
         fact_only = route and classify_query(query) in ("aggregation", "temporal")
-        fetch = top_k * 3 if fact_only else top_k
+        tag_filter = tags.strip().lower() if isinstance(tags, str) and tags.strip() else None
+        fetch = top_k * 3 if fact_only or tag_filter else top_k
 
         def keep(r):
-            return not fact_only or (r.get("tags") or "") == "fact"
+            memory_tags = (r.get("tags") or "").lower()
+            if fact_only and memory_tags != "fact":
+                return False
+            if tag_filter and memory_tags != tag_filter:
+                return False
+            return True
 
         results, fts_ids, sem_ids = {}, [], []
         try:

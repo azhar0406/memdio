@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from benchmarks.longmemeval import extract
+from benchmarks.longmemeval.ingest import cleanup_question_db, ingest_question
 
 
 def test_parse_facts_strips_prefixes_and_drops_none():
@@ -97,3 +98,90 @@ def test_extract_model_reads_env_with_default(monkeypatch):
 
     monkeypatch.setenv("MEMDIO_EXTRACT_MODEL", "custom/model")
     assert extract.extract_model() == "custom/model"
+
+
+def test_extract_session_memories_uses_combined_pref_prompt_when_flag_set(monkeypatch):
+    monkeypatch.setenv("MEMDIO_PREF_V3", "1")
+
+    captured_prompt = []
+
+    def fake_create(**kwargs):
+        captured_prompt.append(kwargs["messages"][0]["content"])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="FACTS:\nNONE\n\nPREFERENCES:\nNONE"))]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+    )
+
+    memories = extract.extract_session_memories(
+        client=client,
+        model="fake-model",
+        session_text="test session",
+        session_date="2026-07-08",
+    )
+
+    assert memories.facts == []
+    assert memories.preferences == []
+    assert len(captured_prompt) == 1
+    assert "Return EXACTLY two sections" in captured_prompt[0]
+    assert "FACTS:" in captured_prompt[0]
+    assert "PREFERENCES:" in captured_prompt[0]
+
+
+def test_extract_session_memories_parses_fact_and_preference_sections(monkeypatch):
+    monkeypatch.setenv("MEMDIO_PREF_V3", "1")
+
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=(
+                        "FACTS:\n"
+                        "1. The user bought a Tamiya Spitfire kit.\n"
+                        "\n"
+                        "PREFERENCES:\n"
+                        "- The user prefers history podcasts for commute listening.\n"
+                    )
+                )
+            )
+        ]
+    )
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **_kwargs: response))
+    )
+
+    memories = extract.extract_session_memories(
+        client=client,
+        model="fake-model",
+        session_text="session",
+        session_date="2026-07-08",
+    )
+
+    assert memories.facts == ["The user bought a Tamiya Spitfire kit."]
+    assert memories.preferences == ["The user prefers history podcasts for commute listening."]
+
+
+def test_ingest_question_stores_preference_profile_memories():
+    question = {
+        "question_id": "q_pref",
+        "haystack_sessions": [[{"role": "user", "content": "I want history podcasts for my commute."}]],
+        "haystack_dates": ["2026/07/08 (Wed) 10:00"],
+    }
+
+    extractor_result = extract.ExtractedMemories(
+        facts=["The user asked for commute listening recommendations."],
+        preferences=["The user prefers history podcasts for commute listening."],
+    )
+
+    storage, db_dir = ingest_question(question, extractor=lambda _text, _date: extractor_result)
+    try:
+        preferences = storage.search_by_tag("preference")
+        assert len(preferences) == 1
+        assert preferences[0]["content"] == (
+            "[2026/07/08 (Wed) 10:00] The user prefers history podcasts for commute listening."
+        )
+    finally:
+        storage.close()
+        cleanup_question_db(db_dir)

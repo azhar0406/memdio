@@ -60,3 +60,13 @@ def test_recall_aggregation_prefers_facts(storage):
     assert results  # returns something
     # every returned memory in aggregation mode is a fact
     assert all((r.get("tags") or "") == "fact" for r in results)
+
+
+def test_recall_can_target_preference_memories(storage):
+    storage.store("The user prefers history podcasts for commute listening.", tags="preference")
+    storage.store("The user bought a 20-pound bag of feed.", tags="fact")
+
+    results = storage.recall("What should I listen to on my commute?", top_k=5, route=False, tags="preference")
+
+    assert results
+    assert all((r.get("tags") or "") == "preference" for r in results)
