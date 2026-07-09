@@ -718,7 +718,7 @@ class StorageManager:
         # Vector similarity search
         current_filter = "" if include_superseded else "AND m.is_current = 1"
         rows = self._conn.execute(
-            f"""SELECT m.id, m.content, m.created_at, m.tags, v.distance, m.event_date, m.document_date
+            f"""SELECT m.id, m.content, m.created_at, v.distance, m.event_date, m.document_date
                 FROM vector_full_scan('memories', 'embedding', ?, ?) v
                 JOIN memories m ON m.rowid = v.rowid
                 {current_filter}""",
@@ -727,8 +727,8 @@ class StorageManager:
 
         results = []
         for r in rows:
-            results.append({"id": r[0], "content": r[1], "created_at": r[2], "tags": r[3],
-                            "score": 1.0 - r[4], "event_date": r[5], "document_date": r[6]})
+            results.append({"id": r[0], "content": r[1], "created_at": r[2],
+                            "score": 1.0 - r[3], "event_date": r[4], "document_date": r[5]})
             if len(results) >= top_k:
                 break
 
@@ -765,8 +765,8 @@ class StorageManager:
         tag_filter = tags.strip().lower() if isinstance(tags, str) and tags.strip() else None
         fetch = top_k * 3 if fact_only or tag_filter else top_k
 
-        def keep(r):
-            memory_tags = (r.get("tags") or "").lower()
+        def keep(memory_tags: str) -> bool:
+            memory_tags = (memory_tags or "").lower()
             if fact_only and memory_tags != "fact":
                 return False
             if tag_filter and memory_tags != tag_filter:
@@ -774,20 +774,44 @@ class StorageManager:
             return True
 
         results, fts_ids, sem_ids = {}, [], []
+        # FTS hits carry tags, so they can be filtered inline (champion behaviour).
         try:
-            for r in [x for x in self.search(query) if keep(x)][:fetch]:
+            for r in [x for x in self.search(query) if keep(x.get("tags") or "")][:fetch]:
                 results[r["id"]] = r
                 fts_ids.append(r["id"])
         except Exception:
             pass
+        # Semantic hits carry NO tags (champion-identical). For the fact_only route
+        # they are intentionally excluded (tagless != "fact"), preserving champion
+        # behaviour. When tag_filter is set (PREF_V3 profile retrieval) we resolve
+        # tags for the semantic candidates via a single batch lookup and filter
+        # there — so the champion path (flag off, no tag_filter) is never touched.
         try:
-            for r in self.semantic_search(query, top_k=fetch):
-                if not keep(r):
-                    continue
-                sem_ids.append(r["id"])
-                results.setdefault(r["id"], r)
+            sem_rows = self.semantic_search(query, top_k=fetch)
         except Exception:
-            pass
+            sem_rows = []
+        if tag_filter and sem_rows:
+            sem_ids_raw = [r["id"] for r in sem_rows]
+            id_to_tags: dict[str, str] = {}
+            try:
+                looked_up = self._conn.execute(
+                    "SELECT id, tags FROM memories WHERE id IN ({})".format(
+                        ",".join("?" * len(sem_ids_raw))
+                    ),
+                    sem_ids_raw,
+                ).fetchall()
+                id_to_tags = {row[0]: row[1] for row in looked_up}
+            except Exception:
+                pass
+            for r in sem_rows:
+                if keep(id_to_tags.get(r["id"]) or ""):
+                    results.setdefault(r["id"], r)
+                    sem_ids.append(r["id"])
+        else:
+            for r in sem_rows:
+                if not fact_only:
+                    results.setdefault(r["id"], r)
+                    sem_ids.append(r["id"])
 
         fused = [d for d, _ in reciprocal_rank_fusion([fts_ids, sem_ids])]
         final_k = 30 if fact_only else top_k
