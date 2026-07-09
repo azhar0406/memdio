@@ -60,3 +60,50 @@ def test_generate_answer_preserves_old_prompt_when_v2_unset(monkeypatch):
             ),
         }
     ]
+
+
+def test_build_preference_profile_dedupes_memories():
+    profile = answer.build_preference_profile(
+        [
+            {"content": "[2026/07/08 (Wed) 10:00] The user prefers history podcasts."},
+            {"content": "[2026/07/08 (Wed) 10:00] The user prefers history podcasts."},
+            {"content": "[2026/07/09 (Thu) 10:00] The user uses Premiere Pro."},
+        ]
+    )
+
+    assert profile == (
+        "- [2026/07/08 (Wed) 10:00] The user prefers history podcasts.\n"
+        "- [2026/07/09 (Thu) 10:00] The user uses Premiere Pro."
+    )
+
+
+def test_generate_answer_uses_preference_prompt_v3_when_flag_set(monkeypatch):
+    captured = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="tailored answer"))]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+    monkeypatch.setenv("MEMDIO_PROMPT_V2", "1")
+    monkeypatch.setenv("MEMDIO_PREF_V3", "1")
+
+    result = answer.generate_answer(
+        client=client,
+        model="fake-model",
+        question="Can you recommend some podcasts for my commute?",
+        context="retrieved memory context",
+        question_date="2026/07/06 (Mon) 12:00",
+        preference_profile="- The user prefers history and science podcasts.",
+    )
+
+    assert result == "tailored answer"
+    assert captured["max_tokens"] == 512
+    prompt = captured["messages"][0]["content"]
+    assert "## User Preference Profile" in prompt
+    assert "- The user prefers history and science podcasts." in prompt
+    assert "You MUST tailor every recommendation to the profile" in prompt

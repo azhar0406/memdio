@@ -104,6 +104,32 @@ This is a recommendation/advice request.
 - Be concise and direct."""
 
 
+PREFERENCE_PROMPT_V3 = """You are a helpful assistant with access to a user's conversation history stored as memories.
+Use the retrieved memories below to answer the user's question accurately.
+
+## User Preference Profile
+{preference_profile}
+
+## Retrieved Memories
+{context}
+
+## Question
+{question}
+
+## Question Date
+This question was asked on: {question_date}
+
+## Instructions
+This is a recommendation/advice request.
+- First, read the preference profile and identify the user's stated preferences, interests, constraints, and current setup relevant to the topic.
+- You MUST tailor every recommendation to the profile and the retrieved memories. Do not give generic advice.
+- Tie EACH recommendation explicitly to a specific preference, interest, constraint, or prior experience from the profile or memories.
+- Ground the preferences in stored memories, but you may draw on general knowledge for the recommendations themselves.
+- If the profile or memories contain on-topic preferences, you MUST provide recommendations based on them rather than declining.
+- Only respond "I don't have enough information to answer this question" if the profile and memories genuinely contain nothing about the topic.
+- Be concise and direct."""
+
+
 AGGREGATION_PROMPT = """You are a helpful assistant with access to a user's conversation history stored as memories.
 Use the retrieved memories below to answer the user's question accurately.
 
@@ -216,7 +242,26 @@ def classify_question(question: str) -> str:
     return "detail"
 
 
-def _build_answer_prompt(question: str, context: str, question_date: str = "") -> tuple[str, int]:
+def build_preference_profile(memories: list[dict]) -> str:
+    lines = []
+    seen = set()
+    for memory in memories:
+        content = (memory.get("content") or "").strip()
+        if not content or content in seen:
+            continue
+        seen.add(content)
+        lines.append(f"- {content}")
+    if not lines:
+        return "- No stored preference profile found."
+    return "\n".join(lines)
+
+
+def _build_answer_prompt(
+    question: str,
+    context: str,
+    question_date: str = "",
+    preference_profile: str = "",
+) -> tuple[str, int]:
     if os.getenv("MEMDIO_PROMPT_V2") != "1":
         return (
             ANSWER_PROMPT.format(
@@ -234,6 +279,18 @@ def _build_answer_prompt(question: str, context: str, question_date: str = "") -
         "temporal": TEMPORAL_PROMPT,
         "detail": ANSWER_PROMPT,
     }
+
+    if os.getenv("MEMDIO_PREF_V3") == "1" and question_class == "preference":
+        return (
+            PREFERENCE_PROMPT_V3.format(
+                preference_profile=preference_profile or "- No stored preference profile found.",
+                context=context,
+                question=question,
+                question_date=question_date,
+            ),
+            512,
+        )
+
     max_tokens = 800 if question_class in ("aggregation", "temporal") else 512
     return (
         prompt_by_class[question_class].format(
@@ -288,11 +345,17 @@ def generate_answer(
     question: str,
     context: str,
     question_date: str = "",
+    preference_profile: str = "",
     provider: str = "openrouter",
     max_retries: int = 3,
 ) -> str:
     """Generate an answer using the specified model/provider."""
-    prompt, max_tokens = _build_answer_prompt(question, context, question_date)
+    prompt, max_tokens = _build_answer_prompt(
+        question,
+        context,
+        question_date,
+        preference_profile=preference_profile,
+    )
 
     for attempt in range(max_retries):
         try:
