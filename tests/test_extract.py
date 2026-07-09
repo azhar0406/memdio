@@ -218,7 +218,9 @@ def test_extract_facts_eventdate_prompt_takes_precedence_over_extract_v3(monkeyp
 
     assert len(captured_prompt) == 1
     assert "event_date=YYYY-MM-DD" in captured_prompt[0]
-    assert "side comment" in captured_prompt[0]
+    assert "Each fact must be self-contained" in captured_prompt[0]
+    assert "side comment" not in captured_prompt[0]
+    assert "category-bearing" not in captured_prompt[0]
 
 
 def test_parse_fact_records_splits_eventdate_prefixes():

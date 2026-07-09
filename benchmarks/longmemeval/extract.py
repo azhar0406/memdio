@@ -70,24 +70,23 @@ EXTRACT_PROMPT_EVENTDATE_V3 = """Extract atomic FACTS about the USER from the co
 
 Rules:
 - Output one fact per line. No numbering, no bullets, no preamble.
-- Extract EVERY concrete user instance that could matter later for counting, ordering,
-  totals, ownership, attendance, purchases, service usage, completion, or updates,
-  even if it appears only as a side comment.
-- Prefer normalized, category-bearing wording when the category is clear:
-  "The user used the food delivery service Domino's Pizza."
-  "The user bought the model kit Revell F-15 Eagle."
-  "The user visited the Science Museum."
+- Each fact must be self-contained (name the subject) and specific.
+- Record CONCRETE, durable facts about the USER: things done, bought, owned, attended,
+  decided, or firmly preferred — with quantities/weights/prices/dates and named items
+  (e.g. "The user bought a 20-pound bag of layer feed", "The user built a Tamiya 1/48
+  Spitfire model kit"). Preserve the specifics needed to later count or total them.
+- ALSO record specific, notable things the ASSISTANT told or recommended to the user
+  (named recommendations, resources, concrete advice, or direct answers) — e.g.
+  "The assistant recommended the book 'Matthew for Everyone' by N.T. Wright".
+- IGNORE vague intentions/interest ("looking for ideas", "is interested in") and
+  generic filler.
 - Prefix every fact with `event_date=YYYY-MM-DD | ` when the event date is clear.
 - Use the conversation date to resolve relative time phrases like "yesterday",
   "last Tuesday", or "two weeks ago".
 - If the event date is unclear, prefix the fact with `event_date=UNKNOWN | `.
-- Keep exact names, quantities, prices, weights, dates, and version/update words.
-- If a later line in the same session updates or supersedes an earlier state, emit
-  the latest state and the concrete new event if both matter.
-- Do not invent dates, categories, or facts not explicitly supported by the conversation.
-- Keep notable assistant recommendations/resources as separate facts when they are
-  specific and named.
-- If no durable facts exist, output NONE.
+- Do not invent dates.
+- Keep any date in the fact text.
+- If the conversation contains no durable facts, output the single word: NONE
 
 Conversation date: {date}
 
