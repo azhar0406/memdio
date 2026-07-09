@@ -61,6 +61,37 @@ Conversation:
 Facts (one per line):"""
 
 
+EXTRACT_PROMPT_EVENTDATE_V3 = """Extract atomic FACTS about the USER from the conversation below.
+
+Rules:
+- Output one fact per line. No numbering, no bullets, no preamble.
+- Extract EVERY concrete user instance that could matter later for counting, ordering,
+  totals, ownership, attendance, purchases, service usage, completion, or updates,
+  even if it appears only as a side comment.
+- Prefer normalized, category-bearing wording when the category is clear:
+  "The user used the food delivery service Domino's Pizza."
+  "The user bought the model kit Revell F-15 Eagle."
+  "The user visited the Science Museum."
+- Prefix every fact with `event_date=YYYY-MM-DD | ` when the event date is clear.
+- Use the conversation date to resolve relative time phrases like "yesterday",
+  "last Tuesday", or "two weeks ago".
+- If the event date is unclear, prefix the fact with `event_date=UNKNOWN | `.
+- Keep exact names, quantities, prices, weights, dates, and version/update words.
+- If a later line in the same session updates or supersedes an earlier state, emit
+  the latest state and the concrete new event if both matter.
+- Do not invent dates, categories, or facts not explicitly supported by the conversation.
+- Keep notable assistant recommendations/resources as separate facts when they are
+  specific and named.
+- If no durable facts exist, output NONE.
+
+Conversation date: {date}
+
+Conversation:
+{session}
+
+Facts (one per line):"""
+
+
 def extract_facts(
     client: OpenAI,
     model: str,
@@ -70,10 +101,13 @@ def extract_facts(
     max_retries: int = 3,
 ) -> list[str]:
     """Extract a list of atomic user facts from one session. Empty list on failure."""
-    use_v3 = os.getenv("MEMDIO_EXTRACT_V3") == "1"
-    prompt = (EXTRACT_PROMPT_V3 if use_v3 else EXTRACT_PROMPT).format(
-        date=session_date or "unknown", session=session_text
-    )
+    if os.getenv("MEMDIO_EVENTDATE_V3") == "1":
+        prompt_template = EXTRACT_PROMPT_EVENTDATE_V3
+    elif os.getenv("MEMDIO_EXTRACT_V3") == "1":
+        prompt_template = EXTRACT_PROMPT_V3
+    else:
+        prompt_template = EXTRACT_PROMPT
+    prompt = prompt_template.format(date=session_date or "unknown", session=session_text)
     for attempt in range(max_retries):
         try:
             if provider == "openai":

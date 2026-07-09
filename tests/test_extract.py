@@ -160,3 +160,74 @@ def test_extract_facts_uses_baseline_prompt_when_flag_unset(monkeypatch):
     assert len(captured_prompt) == 1
     assert "side comment" not in captured_prompt[0]
     assert "category-bearing" not in captured_prompt[0]
+
+
+def test_extract_facts_uses_eventdate_v3_prompt_when_flag_set(monkeypatch):
+    monkeypatch.setenv("MEMDIO_EVENTDATE_V3", "1")
+    monkeypatch.delenv("MEMDIO_EXTRACT_V3", raising=False)
+
+    captured_prompt = []
+
+    def fake_create(**kwargs):
+        content = kwargs["messages"][0]["content"]
+        captured_prompt.append(content)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="NONE"))]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+    )
+
+    extract.extract_facts(
+        client=client,
+        model="fake-model",
+        session_text="test session",
+        session_date="2026-07-08",
+    )
+
+    assert len(captured_prompt) == 1
+    assert "event_date=YYYY-MM-DD" in captured_prompt[0]
+    assert "last Tuesday" in captured_prompt[0]
+
+
+def test_extract_facts_eventdate_prompt_takes_precedence_over_extract_v3(monkeypatch):
+    monkeypatch.setenv("MEMDIO_EVENTDATE_V3", "1")
+    monkeypatch.setenv("MEMDIO_EXTRACT_V3", "1")
+
+    captured_prompt = []
+
+    def fake_create(**kwargs):
+        content = kwargs["messages"][0]["content"]
+        captured_prompt.append(content)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="NONE"))]
+        )
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+    )
+
+    extract.extract_facts(
+        client=client,
+        model="fake-model",
+        session_text="test session",
+        session_date="2026-07-08",
+    )
+
+    assert len(captured_prompt) == 1
+    assert "event_date=YYYY-MM-DD" in captured_prompt[0]
+    assert "side comment" in captured_prompt[0]
+
+
+def test_parse_facts_keeps_eventdate_prefixes_intact():
+    text = """
+    event_date=2026-07-01 | The user visited the Science Museum.
+    event_date=UNKNOWN | The user planned another museum visit.
+    NONE
+    """
+
+    assert extract._parse_facts(text) == [
+        "event_date=2026-07-01 | The user visited the Science Museum.",
+        "event_date=UNKNOWN | The user planned another museum visit.",
+    ]
