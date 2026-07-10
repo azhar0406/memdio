@@ -102,3 +102,86 @@ Verdict: A. RETRIEVAL-MISS.
 Gold: Science Museum, Museum of Contemporary Art, Metropolitan Museum of Art, Museum of History, Modern Art Museum, Natural History Museum.  
 Hypothesis: abstention. Retrieval replay surfaced only four of six required museum-visit sessions.  
 Verdict: A. RETRIEVAL-MISS.
+
+## PREF_V3 validation pair (2026-07-10)
+
+Pair files:
+- Control: `benchmarks/results/prefctl_openai_gpt-4o.json`
+- Variant: `benchmarks/results/prefv3_openai_gpt-4o.json`
+- Prior-day control for variance check: `benchmarks/results/ctrl123_openai_gpt-4o.json`
+
+Design:
+- `prefctl`: same-day A/A control, exact champion flags.
+- `prefv3`: same config plus `MEMDIO_PREF_V3=1`.
+- Both runs: seed-123 stratified set, n=48 total / 8 per question type, judge `gpt-4o`.
+
+Headline result:
+- `prefctl` = 34/48 = 70.8%
+- `prefv3` = 34/48 = 70.8%
+- Preference type: 4/8 = 50.0% in both runs
+
+Verdict:
+- Gate failed. The mechanism engages, but the stored preference content and topic matching
+  were not good enough to beat the same-day control.
+- Question-level diff was only two flips, both inside preference, for zero net gain.
+
+### Preference flip case studies
+
+#### `1a1907b4` — WIN (F -> P)
+Question: cocktail suggestion for an upcoming get-together.  
+Control missed the user's actual mixology signal and gave generic cocktail choices.  
+`MEMDIO_PREF_V3` surfaced the stored Hendrick's-gin preference and the answer shifted to
+gin-forward recommendations such as a cucumber gin fizz and a floral gin-and-tonic variant.
+This is the cleanest evidence that the profile-injection mechanism itself works when the
+stored preference is both on-topic and specific.
+
+#### `32260d93` — LOSS (P -> F)
+Question: show or movie recommendation for tonight.  
+Control passed by anchoring on the user's stand-up/storytelling interest and recommending
+storytelling-heavy comedy specials.  
+`MEMDIO_PREF_V3` failed because the injected profile pulled the answer toward the wrong
+topic cluster (self-improvement podcasts and adjacent audio content) instead of the
+question's narrower entertainment preference. This is a topic-matching failure, not a
+flag-propagation failure.
+
+#### `d6233ab6` — persistent abstention
+Question: whether attending a high school reunion is a good idea.  
+Both control and variant abstained. The profile path did not help because the relevant
+personal-history preference never made it into the stored preference set. This is the
+clearest extraction-quality miss in the pair: if the on-topic preference is absent from
+the profile, the answer-time injection path has nothing useful to amplify.
+
+### Flag-propagation check
+
+Flag propagation was verified independently before interpreting the pair:
+- shell-level mechanics check confirmed the run actually set `MEMDIO_PREF_V3=1`
+- answer forensics confirmed the `PREFERENCE_PROMPT_V3` path was active in the variant
+
+So the null result is not explained by the flag being ignored. The feature ran; it just
+did not improve enough questions to beat control.
+
+### Day-over-day control variance
+
+| Type | `ctrl123` (2026-07-09) | `prefctl` (2026-07-10) | Delta |
+|---|---:|---:|---:|
+| single-session-user | 87.5% | 87.5% | 0.0 |
+| single-session-assistant | 100.0% | 100.0% | 0.0 |
+| single-session-preference | 62.5% | 50.0% | -12.5 |
+| knowledge-update | 87.5% | 87.5% | 0.0 |
+| multi-session | 25.0% | 37.5% | +12.5 |
+| temporal-reasoning | 75.0% | 62.5% | -12.5 |
+| Overall | 72.9% | 70.8% | -2.1 |
+
+Interpretation:
+- identical champion flags moved materially day-to-day on the same n=48 stratified design
+- the biggest swings were exactly one question per type (`12.5pp` at n=8/type)
+- that means this protocol cannot credibly resolve small improvements or regressions
+
+### Statistical-power conclusion
+
+The PREF_V3 pair is useful for mechanism diagnosis, but weak for fine-grained model
+tuning. At n=8 per type, one flip moves a per-type score by 12.5 points. That is too
+coarse to support confidence claims like "preference improved by 5-8pp" or "temporal
+regressed by 4pp." Recommendation: either validate on larger targeted sets (for example,
+all 30 preference questions) or stop tuning against stratified n=48 and treat the current
+74.4%-on-full-500 champion stack as the stable baseline.

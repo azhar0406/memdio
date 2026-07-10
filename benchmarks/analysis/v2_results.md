@@ -26,6 +26,26 @@ inputs: `failure_analysis_66422f77.md`, `sota_research.md`.
 | V2.2 seed 123 | same config, unseen questions | gpt-4o | **77.1%** | 22940205 |
 | V2.3 | + interleaved raw channels + 12-term expansion | gpt-4o | **85.4%** (41/48, zero flips vs V2.2) | b26ec687 |
 | **FULL n=500** | V2.3 config, complete set (2026-07-08) | gpt-4o | **74.4%** (task-avg 74.8%, abstention 80.0%) | full500 |
+| prefctl | same-day A/A control, exact champion flags (seed 123) | gpt-4o | **70.8%** (34/48) | prefctl |
+| prefv3 | champion + `MEMDIO_PREF_V3=1` (seed 123) | gpt-4o | **70.8%** (34/48) | prefv3 |
+
+### PREF_V3 verdict (2026-07-10)
+
+`MEMDIO_PREF_V3` failed its gate on the same-day validation pair. The control (`prefctl`)
+and variant (`prefv3`) both scored 70.8% (34/48), and preference stayed at 50% in both
+runs. The mechanism clearly engaged — `1a1907b4` flipped from fail to pass once the stored
+Hendrick's-gin preference was surfaced — but the gains were cancelled by `32260d93`, where
+the injected profile steered the answer toward the wrong topic, and `d6233ab6`, where the
+system still abstained because the on-topic preference was never extracted into the profile.
+The result is not "feature broken"; it is "content quality and topic matching not good
+enough to beat control."
+
+This pair also reinforced a broader protocol issue: day-over-day variance on stratified
+n=48 is large enough to swamp small changes. Yesterday's same-config control (`ctrl123`)
+was 72.9%; today's (`prefctl`) was 70.8%, with preference dropping from 62.5% to 50% and
+temporal from 75% to 62.5% on identical flags. Recommendation: stop tuning against
+8-per-type seed slices for sub-10pp deltas. Either validate on larger targeted sets
+(for example, all 30 preference questions) or keep the current champion stack as-is.
 
 ## Full n=500 — the official number (2026-07-08)
 
