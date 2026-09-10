@@ -142,6 +142,14 @@ def process_question(
         cleanup_question_db(db_dir)
 
 
+def filter_by_types(dataset: list[dict], types: list[str] | None) -> list[dict]:
+    """Select exact question types, preserving input order; no types is a no-op."""
+    if not types:
+        return dataset
+    allowed = set(types)
+    return [question for question in dataset if question.get("question_type") in allowed]
+
+
 def stratified_sample(dataset: list[dict], n: int, seed: int = 42) -> list[dict]:
     """Deterministically sample n questions balanced across question_type.
 
@@ -183,6 +191,7 @@ def run_benchmark(
     judge_model: str = JUDGE_MODEL,
     stratified: int | None = None,
     seed: int = 42,
+    question_types: list[str] | None = None,
 ):
     """Run full benchmark pipeline with parallel execution."""
     print(f"\n{'=' * 60}")
@@ -192,6 +201,9 @@ def run_benchmark(
     print(f"{'=' * 60}\n")
 
     dataset = load_dataset()
+    dataset = filter_by_types(dataset, question_types)
+    if question_types:
+        print(f"Filtered to {len(dataset)} questions of types: {', '.join(question_types)}")
     if stratified:
         dataset = stratified_sample(dataset, stratified, seed)
     elif limit:
@@ -273,13 +285,19 @@ def main():
     parser.add_argument("--models", type=str, help="Comma-separated model list to test one by one")
     parser.add_argument("--judge-model", type=str, help="Judge model override")
     parser.add_argument("--resume", type=str, help="Resume from run ID")
+    parser.add_argument("--run-id", type=str, help="Explicit run ID (takes precedence over --resume)")
+    parser.add_argument("--question-types", type=str, help="Comma-separated exact question types to include")
     parser.add_argument("--limit", type=int, help="Limit to first N questions (for testing)")
     parser.add_argument("--stratified", type=int, help="Sample N questions balanced across task types")
     parser.add_argument("--seed", type=int, default=42, help="Seed for stratified sampling (default: 42)")
     parser.add_argument("--workers", type=int, default=8, help="Parallel workers for LLM calls (default: 8)")
     args = parser.parse_args()
 
-    run_id = args.resume or str(uuid.uuid4())[:8]
+    run_id = args.run_id or args.resume or str(uuid.uuid4())[:8]
+    question_types = (
+        [t.strip() for t in args.question_types.split(",") if t.strip()]
+        if args.question_types else None
+    )
     if args.models:
         models = [m.strip() for m in args.models.split(",") if m.strip()]
     elif args.model:
@@ -304,6 +322,7 @@ def main():
             judge_model=judge_model,
             stratified=args.stratified,
             seed=args.seed,
+            question_types=question_types,
         )
         all_results[model] = results
 
