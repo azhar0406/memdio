@@ -113,10 +113,6 @@ def abstention_accuracy(results: list[dict]) -> tuple[float, int]:
 
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: python -m benchmarks.tools.pref_comparison <prefctl_results.json> <prefv3_results.json>")
-        sys.exit(1)
-
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("control", help="Control results JSON")
     parser.add_argument("variant", help="Variant results JSON")
@@ -185,7 +181,7 @@ def main():
 
     flips = question_flips(ctl_results, v3_results)
     if flips:
-        print(f"  {'Type':<28s}  {'Question':<40s}  {'PREFCTL':>8s}  {'PREFV3':>8s}")
+        print(f"  {'Type':<28s}  {'Question':<40s}  {'Change':>12s}")
         print("  " + "-" * 60)
         for f in flips:
             arrow = "FAIL -> PASS" if f["prefv3"] and not f["prefctl"] else "PASS -> FAIL"
