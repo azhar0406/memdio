@@ -28,6 +28,9 @@ inputs: `failure_analysis_66422f77.md`, `sota_research.md`.
 | **FULL n=500** | V2.3 config, complete set (2026-07-08) | gpt-4o | **74.4%** (task-avg 74.8%, abstention 80.0%) | full500 |
 | prefctl | same-day A/A control, exact champion flags (seed 123) | gpt-4o | **70.8%** (34/48) | prefctl |
 | prefv3 | champion + `MEMDIO_PREF_V3=1` (seed 123) | gpt-4o | **70.8%** (34/48) | prefv3 |
+| prefctl30 | champion flags, all 30 single-session-preference Qs (2026-09-10) | gpt-4o | **50.0%** (15/30) | prefctl30 |
+| prefctl30b | A/A repeat of prefctl30 (2026-09-10) | gpt-4o | **50.0%** (15/30) | prefctl30b |
+| prefv330 | champion + `MEMDIO_PREF_V3=1`, all 30 pref Qs (2026-09-10) | gpt-4o | **50.0%** (15/30) | prefv330 |
 
 ### PREF_V3 verdict (2026-07-10)
 
@@ -43,9 +46,10 @@ enough to beat control."
 This pair also reinforced a broader protocol issue: day-over-day variance on stratified
 n=48 is large enough to swamp small changes. Yesterday's same-config control (`ctrl123`)
 was 72.9%; today's (`prefctl`) was 70.8%, with preference dropping from 62.5% to 50% and
-temporal from 75% to 62.5% on identical flags. Recommendation: stop tuning against
-8-per-type seed slices for sub-10pp deltas. Either validate on larger targeted sets
-(for example, all 30 preference questions) or keep the current champion stack as-is.
+temporal from 75% to 62.5% on identical flags. **Resolved 2026-09-10:** validated at
+n=30 on the full preference set — net zero (`prefctl30` = `prefv330` = 50.0%, 15/30),
+lever **CLOSED**, not merged. See "PREF_V3 at n=30 (2026-09-10) — final" in
+`v3_extraction_failure_analysis.md`.
 
 ## Full n=500 — the official number (2026-07-08)
 

@@ -210,3 +210,60 @@ coarse to support confidence claims like "preference improved by 5-8pp" or "temp
 regressed by 4pp." Recommendation: either validate on larger targeted sets (for example,
 all 30 preference questions) or stop tuning against stratified n=48 and treat the current
 74.4%-on-full-500 champion stack as the stable baseline.
+
+## PREF_V3 at n=30 (2026-09-10) — final
+
+Design:
+- Branch `pref_v3_rebased` @ `e6d7044` (= `39da04c` rebased on `771296c`).
+- `--question-types single-session-preference` (all 30 questions); `--run-id`
+  `prefctl30` / `prefv330`.
+- Answerer `openai/gpt-4o` (OpenRouter), judge `openai/gpt-4o` (official LongMemEval
+  prompts), workers 8.
+- Same-day, sequential: `prefctl30` (champion flags) → `prefctl30b` (A/A repeat) →
+  `prefv330` (`MEMDIO_PREF_V3=1`).
+
+Headline result:
+- `prefctl30` = 15/30 = 50.0%
+- `prefctl30b` = 15/30 = 50.0%
+- `prefv330` = 15/30 = 50.0%
+
+Net effect of `MEMDIO_PREF_V3` = **zero**.
+
+### The 12-question flip set (prefctl30 → prefv330)
+
+| Direction | Question IDs |
+|---|---|
+| F → P | `06f04340` `1c0ddc50` `35a27287` `57f827a0` `95228167` `afdc33df` |
+| P → F | `195a1a1b` `1da05512` `32260d93` `505af2f5` `a89d7624` `b0479f84` |
+
+Notes:
+- July's single WIN `1a1907b4` FAILED in **both** runs this time — its Hendrick's-gin win
+  did not reproduce (it now sits in the always-fail set).
+- `32260d93` flipped P → F **again** (it was also the P → F loss in the Jul-10 n=48 pair).
+
+### Judge-noise finding
+
+12/30 = 40% of questions flipped between two runs that differ **only** in the preference
+prompt path. A 40% flip rate with net-zero accuracy is the signature of an intervention
+that moves answers around without moving the score.
+
+### A/A noise floor
+
+An identical-config repeat (`prefctl30b`) establishes the measurement floor: between two
+identical controls there were 2/30 flips in a single A/A pair (`32260d93` P→F,
+`afdc33df` F→P). By comparison the intervention produced 12 flips vs ctl and 10 flips vs
+ctl-b — five to six times the A/A floor.
+
+Three-run stability (`prefctl30` / `prefctl30b` / `prefv330`):
+- 9 always-pass
+- 9 always-fail
+- 12 unstable — exactly the PREF_V3 flip set:
+  `06f04340` `195a1a1b` `1c0ddc50` `1da05512` `32260d93` `35a27287` `505af2f5`
+  `57f827a0` `95228167` `a89d7624` `afdc33df` `b0479f84`
+
+### Closing verdict
+
+PREF_V3 is a **real, large, zero-mean intervention** — the mechanism works, but topic
+matching does not. The 12-question flip set is five to six times the 2-question A/A noise
+floor, so this is **not judge noise**: it is a genuine re-ordering of ~40% of preference
+answers with no net accuracy gain. **Lever CLOSED. Do not merge.**
