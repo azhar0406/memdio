@@ -141,6 +141,7 @@ Thumbs.db
 
 # Claude Code / CI config
 .claude/
+.codebase-memory/
 
 # Custom ignores for memdio
 memory_storage/
