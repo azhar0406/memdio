@@ -1,8 +1,9 @@
 # V4: bounded incidental-instance extraction with protected retrieval
 
 Status: proposal only; no implementation or benchmark result. Code references are
-against `64301d5`; the `feat_question_types` runner changes (`38e8784`) are already
-integrated into main. All candidate behavior is enabled only by
+against `89eb95e` (docs-only delta since `64301d5`, line numbers unchanged); the
+`feat_question_types` runner changes (`38e8784`) are already integrated into main.
+All candidate behavior is enabled only by
 `MEMDIO_EXTRACT_V4=1`; the unset path must remain byte-identical under fixed inputs
 and mocked model responses. The 74.4% full-500 champion remains the baseline.
 
@@ -25,7 +26,7 @@ Known development probes from [historical analysis](failure_analysis_66422f77.md
 | Probe | Actual type / observed failure | V4 obligation |
 |---|---|---|
 | `d682f1a2` | MS: missing Domino's/Uber Eats sessions | Preserve grounded incidental use of named services with category wording |
-| `gpt4_59c863d7` | MS: missing F-15/Spitfire/other kit evidence | Preserve distinct acquisitions/builds without conflating repeat mentions |
+| `gpt4_59c863d7` | MS: kit evidence — **PASSED in full500** | Regression guard, not a gain target: preserve distinct acquisitions/builds without conflating repeat mentions |
 | `69fee5aa` | **KU**, not MS: prior 37 coins and later acquisition were both retrieved, but answer stayed 37 | Preserve update semantics and both anchors; retrieval improvement alone cannot establish a fix |
 
 These are previously inspected development examples, not held-out proof. Some
@@ -249,17 +250,20 @@ export MEMDIO_ROUTE=1 MEMDIO_TOPK=20 MEMDIO_MEMCHARS=4000 MEMDIO_RERANK=0
 export MEMDIO_PROMPT_V2=1 MEMDIO_EXHAUSTIVE=1 MEMDIO_MULTIWINDOW=1 MEMDIO_QUERYEXPAND=1
 unset MEMDIO_EXTRACT_V3 MEMDIO_EVENTDATE_V3 MEMDIO_PREF_V3 MEMDIO_EXTRACT_V4
 python -m benchmarks.longmemeval.run --provider openrouter --model openai/gpt-4o \
-  --judge-model openai/gpt-4o --question-types multi-session --run-id v4ms_a1 --workers 1
+  --judge-model openai/gpt-4o --question-types multi-session --run-id v4ms_a1 --workers 8
 # Repeat unchanged as v4ms_a2 (A/A); then add only MEMDIO_EXTRACT_V4=1 as v4ms_b.
 ```
 
 Use campaign-unique run IDs rather than reusing these illustrative names: the
 runner loads existing checkpoints for any matching run ID, including `--run-id`.
 Verify exact question-ID equality and 133 records in each MS arm. Run one job at
-a time; `--workers<=8` is mandatory. Start at **1** because `ingest_question()`
-already has eight extraction threads per question: `--workers 8` can mean up to
-64 concurrent extraction calls, not eight. Increase only with measured memory
-headroom and an explicitly bounded global API concurrency of eight.
+a time; `--workers<=8` is mandatory. Recommend **8** workers — proven on the July
+full-500 run and today's three n=30 runs without incident (the one OOM was at 10).
+`ingest_question()` already runs eight extraction threads per question, so
+`--workers 8` can mean up to 64 concurrent extraction calls; treat that as an
+observation, not a constraint. Timing basis: 30 questions finished in ~8 minutes
+at workers=8, so a 133-question MS arm is ~36 minutes — the same-day A1/A2/B
+protocol is feasible at 8 and infeasible serial.
 
 1. Same-day A1/A2 control replicates and B variant, all 133 MS questions. Predeclare
    A2 as comparator, A1 estimates drift; also require the MS improvement against
@@ -290,6 +294,8 @@ Acceptance gates, using exact counts before rounding:
 - Every other type: variant >= control **-5 percentage points**, against both
   same-day controls. Maximum net losses: preference 1/30, KU 3/78, user 3/70,
   assistant 2/56, temporal 6/133. All types must be measured before acceptance.
+  A preference net loss of 1/30 that does not exceed the A1/A2 spread is
+  **inconclusive — rerun** per the instability rule, not FAIL.
 - A/A spread exceeding 5pp in a type flags instability: report inconclusive and
   collect a fresh matched replicate; do not pick the lower control after seeing B.
 - Zero unresolved API-error records, unique complete matched question IDs,
