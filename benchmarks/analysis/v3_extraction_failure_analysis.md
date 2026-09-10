@@ -219,8 +219,9 @@ Design:
   `prefctl30` / `prefv330`.
 - Answerer `openai/gpt-4o` (OpenRouter), judge `openai/gpt-4o` (official LongMemEval
   prompts), workers 8.
-- Same-day, sequential: `prefctl30` (champion flags) → `prefctl30b` (A/A repeat) →
-  `prefv330` (`MEMDIO_PREF_V3=1`).
+- Same-day, sequential: `prefctl30` (champion flags, 19:19) → `prefv330`
+  (`MEMDIO_PREF_V3=1`, 19:27) → `prefctl30b` (A/A repeat, ~19:50 — launched *after* the
+  pair as the A/A check).
 
 Headline result:
 - `prefctl30` = 15/30 = 50.0%
@@ -241,11 +242,11 @@ Notes:
   did not reproduce (it now sits in the always-fail set).
 - `32260d93` flipped P → F **again** (it was also the P → F loss in the Jul-10 n=48 pair).
 
-### Judge-noise finding
+### Flip-rate finding
 
 12/30 = 40% of questions flipped between two runs that differ **only** in the preference
-prompt path. A 40% flip rate with net-zero accuracy is the signature of an intervention
-that moves answers around without moving the score.
+prompt path — a 40% flip rate with net-zero accuracy. The A/A floor below shows this is
+**not** judge noise.
 
 ### A/A noise floor
 
