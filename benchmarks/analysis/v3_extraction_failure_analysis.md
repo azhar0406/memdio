@@ -220,7 +220,7 @@ Design:
 - Answerer `openai/gpt-4o` (OpenRouter), judge `openai/gpt-4o` (official LongMemEval
   prompts), workers 8.
 - Same-day, sequential: `prefctl30` (champion flags, 19:19) → `prefv330`
-  (`MEMDIO_PREF_V3=1`, 19:27) → `prefctl30b` (A/A repeat, ~19:50 — launched *after* the
+  (`MEMDIO_PREF_V3=1`, 19:27) → `prefctl30b` (A/A repeat, 19:43 — launched *after* the
   pair as the A/A check).
 
 Headline result:
