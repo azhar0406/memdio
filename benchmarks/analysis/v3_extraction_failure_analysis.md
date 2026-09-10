@@ -240,7 +240,10 @@ Net effect of `MEMDIO_PREF_V3` = **zero**.
 Notes:
 - July's single WIN `1a1907b4` FAILED in **both** runs this time — its Hendrick's-gin win
   did not reproduce (it now sits in the always-fail set).
-- `32260d93` flipped P → F **again** (it was also the P → F loss in the Jul-10 n=48 pair).
+- `32260d93` flipped P → F **again** (it was also the P → F loss in the Jul-10 n=48 pair,
+  and it flipped P → F in the A/A pair `prefctl30` → `prefctl30b`), so its recurrence
+  cannot be attributed to `MEMDIO_PREF_V3` specifically — it is simply an unstable
+  question.
 
 ### Flip-rate finding
 
